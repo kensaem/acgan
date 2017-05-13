@@ -3,8 +3,8 @@ from layer import *
 from vgg_model import *
 
 
-def leaky_relu(x):
-    return tf.where(tf.greater(x, 0), x, 0.01 * x)
+def leaky_relu(x, neg_thres=0.1):
+    return tf.where(tf.greater(x, 0), x, neg_thres * x)
 
 
 class ACGANModel:
@@ -94,7 +94,7 @@ class ACGANModel:
             )
         )
 
-        # Latent loss
+        # condition loss
         self.cond_loss = tf.losses.mean_squared_error(
             self.noise_t,
             self.fake_cond_t
@@ -128,7 +128,8 @@ class ACGANModel:
             reuse=False,
             name="generator",
     ):
-        activation = tf.nn.relu
+        # activation = tf.nn.relu
+        activation = leaky_relu
 
         with tf.variable_scope(name, reuse=reuse):
             with tf.variable_scope("embedding"):
@@ -144,30 +145,34 @@ class ACGANModel:
                 output_t = activation(output_t)
 
             with tf.variable_scope("fc_2"):
-                w_fc = weight_variable([1024, 4*4*128], name="fc_2")
+                w_fc = weight_variable([1024, 4*4*256], name="fc_2")
                 output_t = tf.matmul(output_t, w_fc)
                 output_t = batch_normalization(output_t, is_training=self.is_training_ph, scope='bn')
                 output_t = activation(output_t)
 
-            output_t = tf.reshape(output_t, [-1, 4, 4, 128])
+            output_t = tf.reshape(output_t, [-1, 4, 4, 256])
 
             with tf.variable_scope("conv_tp_1"):
-                w_conv = weight_variable([5, 5, 64, 128], name="conv_tp_1")
-                output_t = tf.nn.conv2d_transpose(output_t, w_conv, [batch_size, 8, 8, 64], [1, 2, 2, 1])
+                w_conv = weight_variable([5, 5, 128, 256], name="conv_tp_1")
+                output_t = tf.nn.conv2d_transpose(output_t, w_conv, [batch_size, 8, 8, 128], [1, 2, 2, 1])
                 output_t = batch_normalization(output_t, is_training=self.is_training_ph, scope='bn')
                 output_t = activation(output_t)
 
             with tf.variable_scope("conv_tp_2"):
-                w_conv = weight_variable([5, 5, 16, 64], name="conv_tp_2")
-                output_t = tf.nn.conv2d_transpose(output_t, w_conv, [batch_size, 16, 16, 16], [1, 2, 2, 1])
+                w_conv = weight_variable([5, 5, 64, 128], name="conv_tp_2")
+                output_t = tf.nn.conv2d_transpose(output_t, w_conv, [batch_size, 16, 16, 64], [1, 2, 2, 1])
                 output_t = batch_normalization(output_t, is_training=self.is_training_ph, scope='bn')
                 output_t = activation(output_t)
 
             with tf.variable_scope("conv_tp_3"):
-                w_conv = weight_variable([5, 5, 3, 16], name="conv_tp_3")
-                b_conv = bias_variable([3], name="conv_tp_3")
-                output_t = tf.nn.conv2d_transpose(output_t, w_conv, [batch_size, 32, 32, 3], [1, 2, 2, 1])
-                output_t += b_conv
+                w_conv = weight_variable([5, 5, 32, 64], name="conv_tp_3")
+                output_t = tf.nn.conv2d_transpose(output_t, w_conv, [batch_size, 32, 32, 32], [1, 2, 2, 1])
+                output_t = batch_normalization(output_t, is_training=self.is_training_ph, scope='bn')
+                output_t = activation(output_t)
+
+            with tf.variable_scope("conv_tp_4"):
+                w_conv = weight_variable([5, 5, 3, 32], name="conv_tp_4")
+                output_t = tf.nn.conv2d_transpose(output_t, w_conv, [batch_size, 32, 32, 3], [1, 1, 1, 1])
 
             # last activation is sigmoid
             output_t = tf.nn.sigmoid(output_t)
