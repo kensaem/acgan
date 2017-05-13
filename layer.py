@@ -21,11 +21,8 @@ def bias_variable(shape, name=None):
 
 
 def conv2d(x, W, stride=None, padding=None):
-    if stride is None:
-        stride = [1, 1, 1, 1]
-    if padding is None:
-        padding = 'SAME'
-
+    stride = stride or [1, 1, 1, 1]
+    padding = padding or 'SAME'
     return tf.nn.conv2d(x, W, strides=stride, padding=padding)
 
 

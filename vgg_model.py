@@ -6,11 +6,11 @@ def vgg_block(
         input_tensor,
         output_channel,
         layer_name,
+        activation=tf.nn.relu,
         is_training=None,
-        with_bn=False,
+        with_bn=True,
         with_dropout=False,
         keep_prob_placeholder=None,
-        batch_size=None
 ):
     if with_bn:
         assert(is_training is not None)
@@ -27,7 +27,7 @@ def vgg_block(
         else:
             b_conv = bias_variable([output_channel], name=layer_name)
             output_tensor += b_conv
-        output_tensor = tf.nn.relu(output_tensor)
+        output_tensor = activation(output_tensor)
         if with_dropout \
                 and keep_prob_placeholder is not None \
                 and batch_size is not None:
@@ -91,8 +91,8 @@ class Model:
 
     def build_model_vgg(self, with_bn, with_dropout, name="vgg"):
         # layers_size = [1, 1, 2, 2, 2]  #vgg11
-        # layers_size = [2, 2, 3, 3, 3]  #vgg16
-        layers_size = [2, 2, 4, 4, 4]  #vgg19
+        layers_size = [2, 2, 3, 3, 3]  #vgg16
+        # layers_size = [2, 2, 4, 4, 4]  #vgg19
 
         output_tensor = self.input_image_placeholder
         output_tensor = tf.cond(
@@ -113,9 +113,6 @@ class Model:
                     layer_name="layer1_"+str(idx),
                     is_training=self.is_training_placeholder,
                     with_bn=with_bn,
-                    # with_dropout=with_dropout,
-                    # keep_prob_placeholder=self.keep_prob_placeholder,
-                    # batch_size=self.batch_size_placeholder,
                 )
             with tf.variable_scope("layer1_3"):
                 output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
@@ -135,9 +132,6 @@ class Model:
                     layer_name="layer2_"+str(idx),
                     is_training=self.is_training_placeholder,
                     with_bn=with_bn,
-                    # with_dropout=with_dropout,
-                    # keep_prob_placeholder=self.keep_prob_placeholder,
-                    # batch_size=self.batch_size_placeholder,
                 )
             with tf.variable_scope("layer2_pooling"):
                 output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
@@ -157,9 +151,6 @@ class Model:
                     layer_name="layer3_"+str(idx),
                     is_training=self.is_training_placeholder,
                     with_bn=with_bn,
-                    # with_dropout=with_dropout,
-                    # keep_prob_placeholder=self.keep_prob_placeholder,
-                    # batch_size=self.batch_size_placeholder,
                 )
             with tf.variable_scope("layer3_pooling"):
                 output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
@@ -179,9 +170,6 @@ class Model:
                     layer_name="layer4_"+str(idx),
                     is_training=self.is_training_placeholder,
                     with_bn=with_bn,
-                    # with_dropout=with_dropout,
-                    # keep_prob_placeholder=self.keep_prob_placeholder,
-                    # batch_size=self.batch_size_placeholder,
                 )
             with tf.variable_scope("layer4_pooling"):
                 output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
@@ -201,9 +189,6 @@ class Model:
                     layer_name="layer5_"+str(idx),
                     is_training=self.is_training_placeholder,
                     with_bn=with_bn,
-                    # with_dropout=with_dropout,
-                    # keep_prob_placeholder=self.keep_prob_placeholder,
-                    # batch_size=self.batch_size_placeholder,
                 )
             with tf.variable_scope("layer5_pooling"):
                 output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
