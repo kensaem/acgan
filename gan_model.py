@@ -46,10 +46,10 @@ class ACGANModel:
         self.noise_t = tf.random_normal((self.batch_size_ph, self.noise_size))
 
         # Build model for generator
-        random_cls = tf.multinomial(tf.ones((self.batch_size_ph, 10), dtype=tf.float32) / 10, 1)
-        self.fake_cls_t = tf.to_int32(tf.squeeze(random_cls, -1))
+        sample_cls = tf.multinomial(tf.ones((self.batch_size_ph, 10), dtype=tf.float32) / 10, 1)
+        self.label_fake_cls_t = tf.to_int32(tf.squeeze(sample_cls, -1))
         self.fake_image_t = self.build_generator(
-            self.fake_cls_t,
+            self.label_fake_cls_t,
             self.noise_t,
             batch_size=50
         )
@@ -68,7 +68,7 @@ class ACGANModel:
 
         # Classification loss
         self.real_cls_loss = self.build_cls_loss(self.label_cls_ph, self.real_cls_t)
-        self.fake_cls_loss = self.build_cls_loss(self.fake_cls_t, self.fake_cls_t)
+        self.fake_cls_loss = self.build_cls_loss(self.label_fake_cls_t, self.fake_cls_t)
         self.cls_loss = (self.real_cls_loss + self.fake_cls_loss) / 2.0
 
         # Discrimination loss

@@ -268,7 +268,7 @@ class Classifier:
                 self.model.correct_count,
                 self.model.conf_matrix,
                 self.model.fake_image_t,
-                self.model.fake_cls_t,
+                self.model.label_fake_cls_t,
             ]
             sess_output = self.sess.run(
                 fetches=sess_input,
