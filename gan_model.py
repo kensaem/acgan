@@ -60,7 +60,7 @@ class ACGANModel:
             input_tensor=self.fake_image_t,
         )
 
-        input_real_tensor = tf.div(tf.to_float(self.input_image_ph), 255.0, name="input_image_float")
+        input_real_tensor = tf.div(tf.to_float(self.input_image_ph), 255.0, name="input_image_float") * 2.0 - 1.0
         self.real_cls_t, self.real_disc_t, _ = self.build_discriminator(
             input_tensor=input_real_tensor,
             reuse=True,
@@ -175,7 +175,7 @@ class ACGANModel:
                 output_t = tf.nn.conv2d_transpose(output_t, w_conv, [batch_size, 32, 32, 3], [1, 1, 1, 1])
 
             # last activation is sigmoid
-            output_t = tf.nn.sigmoid(output_t)
+            output_t = tf.nn.tanh(output_t)
 
         return output_t
 
