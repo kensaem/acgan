@@ -45,7 +45,7 @@ class ACGANModel:
 
         self.noise_t = tf.random_normal((self.batch_size_ph, self.noise_size))
 
-        # Build model for generator
+        # NOTE Build model for generator
         sample_cls = tf.multinomial(tf.ones((self.batch_size_ph, 10), dtype=tf.float32) / 10, 1)
         self.label_fake_cls_t = tf.to_int32(tf.squeeze(sample_cls, -1))
         self.fake_image_t = self.build_generator(
@@ -55,12 +55,12 @@ class ACGANModel:
         )
         print(self.fake_image_t)
 
-        # Build model for discriminator
+        # NOTE Build model for discriminator
         self.fake_cls_t, self.fake_disc_t, self.fake_cond_t = self.build_discriminator(
             input_tensor=self.fake_image_t,
         )
 
-        input_real_tensor = tf.div(tf.to_float(self.input_image_ph), 255.0, name="input_image_float") * 2.0 - 1.0
+        input_real_tensor = tf.div(tf.to_float(self.input_image_ph), 255.0, name="input_image_float")
         self.real_cls_t, self.real_disc_t, _ = self.build_discriminator(
             input_tensor=input_real_tensor,
             reuse=True,
@@ -174,9 +174,7 @@ class ACGANModel:
                 w_conv = weight_variable([5, 5, 3, 32], name="conv_tp_4")
                 output_t = tf.nn.conv2d_transpose(output_t, w_conv, [batch_size, 32, 32, 3], [1, 1, 1, 1])
 
-            # last activation is sigmoid
-            output_t = tf.nn.tanh(output_t)
-
+        output_t = tf.nn.sigmoid(output_t)
         return output_t
 
     def build_discriminator(
@@ -306,10 +304,11 @@ class ACGANModel:
             output_discriminator_t = output_share_t
             with tf.variable_scope("discriminator_fc_1"):
                 w_fc = weight_variable([512, 10], name="discriminator_fc_1")
-                b_fc = bias_variable([10], name="discriminator_fc_1")
-                output_discriminator_t = tf.matmul(output_discriminator_t, w_fc) + b_fc
+                output_discriminator_t = tf.matmul(output_discriminator_t, w_fc)
                 output_discriminator_t = batch_normalization(x=output_discriminator_t, is_training=self.is_training_ph, scope="bn")
                 output_discriminator_t = leaky_relu(output_discriminator_t)
+
+            output_discriminator_t = tf.nn.dropout(output_discriminator_t, self.keep_prob_ph)
 
             with tf.variable_scope("discriminator_fc_2"):
                 w_fc = weight_variable([10, 1], name="discriminator_fc_2")
