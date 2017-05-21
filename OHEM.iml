@@ -5,6 +5,7 @@
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/base" />
       <excludeFolder url="file://$MODULE_DIR$/data" />
+      <excludeFolder url="file://$MODULE_DIR$/data_full" />
       <excludeFolder url="file://$MODULE_DIR$/device0" />
       <excludeFolder url="file://$MODULE_DIR$/device1" />
       <excludeFolder url="file://$MODULE_DIR$/device2" />

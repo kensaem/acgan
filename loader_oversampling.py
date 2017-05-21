@@ -2,7 +2,7 @@ from loader import *
 import math
 
 
-class LoaderUpsampling(Loader):
+class LoaderOversampling(Loader):
     RawDataTuple = collections.namedtuple("RawDataTuple", ['path', 'label'])
 
     def __init__(self, data_path, batch_size):

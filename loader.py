@@ -11,6 +11,19 @@ BatchTuple = collections.namedtuple("BatchTuple", ['images', 'labels'])
 class Loader:
     RawDataTuple = collections.namedtuple("RawDataTuple", ['path', 'label'])
 
+    label_name = [
+        "airplane",
+        "automobile",
+        "bird",
+        "cat",
+        "deer",
+        "dog",
+        "frog",
+        "horse",
+        "ship",
+        "truck"
+    ]
+
     def __init__(self, data_path, batch_size):
         self.sess = tf.Session()
         self.image_info = {
@@ -83,7 +96,7 @@ class Loader:
                 decode_jpeg_tensor = tf.image.decode_jpeg(image_data, channels=3)
                 image = self.sess.run(decode_jpeg_tensor)
             else:
-                image = cv2.imread(single_data.path)
+                image = cv2.imread(single_data.path, 1)
 
             batch.images[idx, :, :, :] = image
             batch.labels[idx] = single_data.label
