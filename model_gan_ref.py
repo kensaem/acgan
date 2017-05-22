@@ -96,7 +96,8 @@ class ACGANModel:
             name='label_condition_placeholder')
 
         # NOTE Build model for generator
-        self.noise_t = tf.random_normal((self.batch_size_ph, self.noise_size))
+        self.noise_t = tf.random_normal(shape=[self.batch_size_ph, self.noise_size])
+        # self.noise_t = tf.random_uniform(shape=[self.batch_size_ph, self.noise_size], minval=-1.0, maxval=1.0)
         self.label_cond_t = tf.random_normal((self.batch_size_ph, self.cond_size))
         sample_cls = tf.multinomial(tf.ones((self.batch_size_ph, 10), dtype=tf.float32) / 10, 1)
         self.label_fake_cls_t = tf.to_int32(tf.squeeze(sample_cls, -1))
@@ -112,8 +113,8 @@ class ACGANModel:
 
         # NOTE Build model for discriminator
         self.real_image_t = tf.div(tf.to_float(self.input_image_ph), 127.5) - 1.0
-        self.real_cls_t, self.real_disc_t, self.real_cond_t = self.build_discriminator(input_tensor=self.real_image_t)
-        self.fake_cls_t, self.fake_disc_t, self.fake_cond_t = self.build_discriminator(input_tensor=self.fake_image_t, reuse=True)
+        self.real_cls_t, self.real_disc_t, self.real_cond_t = self.build_discriminator(input_t=self.real_image_t)
+        self.fake_cls_t, self.fake_disc_t, self.fake_cond_t = self.build_discriminator(input_t=self.fake_image_t, reuse=True)
 
         # NOTE Classification loss
         self.cls_loss_real = self.build_cls_loss(self.label_cls_ph, self.real_cls_t)
@@ -125,16 +126,16 @@ class ACGANModel:
         self.disc_loss_real = tf.reduce_mean(
             tf.nn.sigmoid_cross_entropy_with_logits(
                 logits=self.real_disc_t,
-                labels=noisy_real_labels,
-                # labels=tf.ones_like(self.real_disc_t),
+                # labels=noisy_real_labels,
+                labels=tf.ones_like(self.real_disc_t),
             )
         )
         noisy_fake_labels = tf.random_uniform([self.batch_size_ph], minval=0.0, maxval=0.3)
         self.disc_loss_fake = tf.reduce_mean(
             tf.nn.sigmoid_cross_entropy_with_logits(
                 logits=self.fake_disc_t,
-                labels=noisy_fake_labels,
-                # labels=tf.zeros_like(self.fake_disc_t),
+                # labels=noisy_fake_labels,
+                labels=tf.zeros_like(self.fake_disc_t),
             )
         )
 
@@ -143,8 +144,8 @@ class ACGANModel:
         self.gen_loss = tf.reduce_mean(
             tf.nn.sigmoid_cross_entropy_with_logits(
                 logits=self.fake_disc_t,
-                labels=noisy_real_labels,
-                # labels=tf.ones_like(self.fake_disc_t),
+                # labels=noisy_real_labels,
+                labels=tf.ones_like(self.fake_disc_t),
             )
         )
 
@@ -154,9 +155,8 @@ class ACGANModel:
             self.real_cond_t
         )
 
-
         # NOTE build optimizers
-        beta1 = 0.5
+        beta1 = 0.9
         t_vars = tf.trainable_variables()
         # for var in t_vars:
         #     print(var.name)
@@ -164,18 +164,18 @@ class ACGANModel:
         for var in d_vars:
             print(var.name)
         self.train_op_disc_real = tf.train.AdamOptimizer(self.lr_disc_ph, beta1=beta1).minimize(
-            self.disc_loss_real,
-            # (self.disc_loss_real + self.cls_loss_real),
+            # self.disc_loss_real,
+            (self.disc_loss_real + self.cls_loss_real),
             # (self.disc_loss_real + self.cls_loss_real + self.cond_loss),
-            global_step=self.global_step_disc,
+            # global_step=self.global_step_disc,
             var_list=d_vars,
         )
 
         self.train_op_disc_fake = tf.train.AdamOptimizer(self.lr_disc_ph, beta1=beta1).minimize(
-            self.disc_loss_fake,
-            # (self.disc_loss_fake + self.cls_loss_fake),
+            # self.disc_loss_fake,
+            (self.disc_loss_fake + self.cls_loss_fake),
             # (self.disc_loss_fake + self.cls_loss_fake + self.cond_loss),
-            global_step=self.global_step_disc,
+            # global_step=self.global_step_disc,
             var_list=d_vars,
         )
 
@@ -192,15 +192,13 @@ class ACGANModel:
 
         # For validation and test
         most_realistic_index = tf.arg_max(self.fake_disc_t, 0)
-        # most_realistic_index, most_realistic_disc_t = tf.nn.top_k(self.fake_disc_t, 1)
         self.most_realistic_fake_class = tf.gather(self.label_fake_cls_t, most_realistic_index)
         self.most_realistic_fake_image = tf.gather(self.fake_image_t, most_realistic_index)
 
-        print(self.real_cls_t)
         self.pred_label = tf.arg_max(tf.nn.softmax(self.real_cls_t), 1)
         self.conf_matrix = tf.confusion_matrix(self.label_cls_ph, self.pred_label, num_classes=10)
         self.correct_count = tf.reduce_sum(tf.to_float(tf.equal(self.pred_label, self.label_cls_ph)), axis=0)
-        print(self.pred_label)
+
 
         return
 
@@ -218,26 +216,42 @@ class ACGANModel:
 
         with tf.variable_scope(name, reuse=reuse):
             with tf.variable_scope("embedding"):
-                output_t = input_noise_t
+                # output_t = input_noise_t
 
                 # class_embed_t = tf.one_hot(input_class_t, self.latent_cls_size)
                 # output_t = tf.concat([input_noise_t, class_embed_t], axis=-1)
 
-                # params = weight_variable([10, self.noise_size], name="class_params")
-                # class_embed_t = tf.nn.embedding_lookup(params, input_class_t)
-                # output_t = input_noise_t * class_embed_t
+                params = weight_variable([10, self.latent_cls_size], name="class_params")
+                class_embed_t = tf.nn.embedding_lookup(params, input_class_t)
+                output_t = tf.concat([input_noise_t, class_embed_t], axis=-1)
 
-            output_t = tf.reshape(output_t, [-1, 1, 1, self.noise_size])
+            # NOTE from DCGAN model
+
+            output_t = tf.reshape(output_t, [-1, 1, 1, self.noise_size+self.latent_cls_size])
             output_t = deconv_block(
                 output_t,
                 [batch_size, 2, 2, 512],
                 layer_name="conv_tp_0",
                 is_training=self.is_training_gen_ph,
                 activation=activation,
-                stride_size=1,
+                padding='VALID',
                 kernel_size=2,
-                padding='VALID'
             )
+
+            # with tf.variable_scope("fc_1"):
+            #     w_conv = weight_variable([self.noise_size+self.latent_cls_size, 512], name="fc_1")
+            #     b_conv = bias_variable([512], name="fc_1")
+            #     output_t = tf.matmul(output_t, w_conv) + b_conv
+            #     output_t = batch_normalization(output_t, is_training=self.is_training_disc_ph, scope="bn")
+            #     output_t = activation(output_t)
+            #
+            # with tf.variable_scope("fc_2"):
+            #     w_conv = weight_variable([512, 512*2*2], name="fc_2")
+            #     b_conv = bias_variable([512*2*2], name="fc_2")
+            #     output_t = tf.matmul(output_t, w_conv) + b_conv
+            #     output_t = batch_normalization(output_t, is_training=self.is_training_disc_ph, scope="bn")
+            #     output_t = activation(output_t)
+            # output_t = tf.reshape(output_t, [-1, 2, 2, 512])
 
             output_t = deconv_block(
                 output_t,
@@ -276,15 +290,15 @@ class ACGANModel:
 
     def build_discriminator(
             self,
-            input_tensor,
+            input_t,
             reuse=False,
             name="discriminator"
     ):
         activation = leaky_relu
         output_t = tf.cond(
             self.is_training_disc_ph,
-            lambda: tf.map_fn(lambda img: tf.image.random_flip_left_right(img), input_tensor),
-            lambda: input_tensor
+            lambda: tf.map_fn(lambda img: tf.image.random_flip_left_right(img), input_t),
+            lambda: input_t
         )
 
         with tf.variable_scope(name, reuse=reuse):
@@ -298,6 +312,8 @@ class ACGANModel:
                 stride=2,
             )
 
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 64])
+
             # input size 16
             output_t = cnn_block(
                 input_t=output_t,
@@ -307,6 +323,7 @@ class ACGANModel:
                 activation=activation,
                 stride=2,
             )
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 128])
 
             # input size 8
             output_t = cnn_block(
@@ -317,25 +334,27 @@ class ACGANModel:
                 activation=activation,
                 stride=2,
             )
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 256])
 
             # input size 4
-            # output_t = cnn_block(
-            #     input_tensor=output_t,
-            #     output_channel=512,
-            #     layer_name="layer4",
-            #     is_training=self.is_training_disc_ph,
-            #     activation=activation,
-            #     stride=2,
-            # )
+            output_t = cnn_block(
+                input_t=output_t,
+                output_channel=512,
+                layer_name="layer4",
+                is_training=self.is_training_disc_ph,
+                activation=activation,
+                stride=2,
+            )
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 256])
 
             # input size 2 w/ channel 512 => fc layer
             output_share_t = output_t
 
             # Branch 1. classification for label [0~9]
             output_cls_t = output_share_t
-            output_cls_t = tf.reshape(output_cls_t, [-1, 256*4*4])
+            output_cls_t = tf.reshape(output_cls_t, [-1, 512*2*2])
             with tf.variable_scope("cls_fc_1"):
-                w_fc = weight_variable([256*4*4, 512], name="cls_fc_1")
+                w_fc = weight_variable([512*2*2, 512], name="cls_fc_1")
                 b_fc = bias_variable([512], name="cls_fc_1")
                 output_cls_t = tf.matmul(output_cls_t, w_fc) + b_fc
                 output_cls_t = batch_normalization(x=output_cls_t, is_training=self.is_training_disc_ph, scope="bn")
@@ -348,20 +367,25 @@ class ACGANModel:
 
             # Branch 2. discriminator for real / fake
             output_disc_t = output_share_t
-            with tf.variable_scope("disc_conv"):
-                w_conv = weight_variable([4, 4, 256, 1], name="disc_conv")
-                b_conv = bias_variable([1], name="disc_conv")
-                output_disc_t = conv2d(output_disc_t, w_conv, padding='VALID') + b_conv
+            output_disc_t = tf.reshape(output_disc_t, [-1, 512*2*2])
+            with tf.variable_scope("disc_conv_1"):
+                w_conv = weight_variable([2*2*512, 512], name="disc_conv_1")
+                b_conv = bias_variable([512], name="disc_conv_1")
+                output_disc_t = tf.matmul(output_disc_t, w_conv) + b_conv
+                output_disc_t = batch_normalization(output_disc_t, is_training=self.is_training_disc_ph, scope="bn")
+                output_disc_t = activation(output_disc_t)
 
-                print(output_disc_t)
+            with tf.variable_scope("disc_conv_2"):
+                w_conv = weight_variable([512, 1], name="disc_conv_2")
+                b_conv = bias_variable([1], name="disc_conv_2")
+                output_disc_t = tf.matmul(output_disc_t, w_conv) + b_conv
                 output_disc_t = tf.reshape(output_disc_t, [-1])
-                print(output_disc_t)
 
             # Branch 3. latent
             output_cond_t = output_share_t
-            output_cond_t = tf.reshape(output_cond_t, [-1, 256*4*4])
+            output_cond_t = tf.reshape(output_cond_t, [-1, 256*2*2])
             with tf.variable_scope("cond_fc"):
-                w_fc = weight_variable([256*4*4, self.cond_size], name="cond_fc")
+                w_fc = weight_variable([256*2*2, self.cond_size], name="cond_fc")
                 b_fc = bias_variable([self.cond_size], name="cond_fc")
                 output_cond_t = tf.matmul(output_cond_t, w_fc) + b_fc
 

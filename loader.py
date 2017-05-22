@@ -67,7 +67,6 @@ class Loader:
         np.random.seed(self.epoch_counter)
         self.perm_idx = np.random.permutation(len(self.data))
         self.epoch_counter += 1
-
         return
 
     def get_empty_batch(self, batch_size):

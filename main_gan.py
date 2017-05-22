@@ -18,10 +18,10 @@ tf.app.flags.DEFINE_boolean('valid_only', False, 'flag for validation only. this
 tf.app.flags.DEFINE_integer('batch_size', 64, 'mini-batch size for training')
 tf.app.flags.DEFINE_float('lr_disc', 1e-4, 'initial learning rate for discriminator')
 tf.app.flags.DEFINE_float('lr_gen', 1e-4, 'initial learning rate for generator')
-tf.app.flags.DEFINE_float('lr_decay_ratio', 0.9, 'ratio for decaying learning rate')
+tf.app.flags.DEFINE_float('lr_decay_ratio', .9, 'ratio for decaying learning rate')
 tf.app.flags.DEFINE_integer('lr_decay_interval', 2000, 'step interval for decaying learning rate')
-tf.app.flags.DEFINE_integer('train_log_interval', 100, 'step interval for triggering print logs of train')
-tf.app.flags.DEFINE_integer('valid_log_interval', 500, 'step interval for triggering validation')
+tf.app.flags.DEFINE_integer('train_log_interval', 200, 'step interval for triggering print logs of train')
+tf.app.flags.DEFINE_integer('valid_log_interval', 1000, 'step interval for triggering validation')
 
 tf.app.flags.DEFINE_boolean('use_ohem', False, 'use OHEM or not')
 tf.app.flags.DEFINE_integer('hard_sampling_factor', 2, 'searching window size for OHEM')
@@ -116,19 +116,23 @@ class Classifier:
     def train(self):
         self.train_loader.reset()
 
-        accum_real_disc_loss = .0
-        accum_real_cls_loss = .0
+        last_real_disc_loss = sys.float_info.max
+        last_real_cls_loss = sys.float_info.max
 
-        accum_fake_disc_loss = .0
-        accum_fake_cls_loss = .0
-        accum_gen_loss = .0
+        last_fake_disc_loss = sys.float_info.max
+        last_fake_cls_loss = sys.float_info.max
+        last_gen_loss = sys.float_info.max
 
-        accum_correct_count = .0
-        accum_conf_matrix = None
+        last_correct_count = .0
+        last_conf_matrix = None
 
         last_valid_disc_loss = sys.float_info.max
         last_valid_gen_loss = sys.float_info.max
         last_valid_accuracy = .0
+
+        cur_step = 0
+
+
         while True:
             start_time = time.time()
             batch_data = self.train_loader.get_batch()
@@ -137,89 +141,123 @@ class Classifier:
                 self.epoch_counter += 1
                 continue
 
+            real_disc_threshold = 0.81326169
+            fake_disc_threshold = 0.69314718
+            disc_threshold = (real_disc_threshold + fake_disc_threshold) * 0.9
+            gen_threshold = fake_disc_threshold
+
             # Step 1. train for discriminator
 
             # train on real sample
+            # while (last_real_disc_loss + last_fake_disc_loss) > disc_threshold:
+            while last_real_disc_loss > real_disc_threshold:
+                sess_output = self.sess.run(
+                    fetches=[
+                        self.model.train_op_disc_real,
+                        self.model.disc_loss_real,
+                        ],
+                    feed_dict={
+                        self.model.lr_disc_ph: self.lr_disc,
+                        self.model.keep_prob_ph: 0.9,
+                        self.model.is_training_gen_ph: False,
+                        self.model.is_training_disc_ph: True,
+                        self.model.input_image_ph: batch_data.images,
+                        self.model.label_cls_ph: batch_data.labels,
+                        self.model.batch_size_ph: self.batch_size,
+                    }
+                )
+                last_real_disc_loss = sess_output[1]  # disc_loss
+                # print("train_op_disc_real")
+
+            # train on fake sample
+            while last_fake_disc_loss > fake_disc_threshold:
+                sess_output = self.sess.run(
+                    fetches=[
+                        self.model.train_op_disc_fake,
+                        self.model.disc_loss_fake,
+                        ],
+                    feed_dict={
+                        self.model.lr_disc_ph: self.lr_disc,
+                        self.model.keep_prob_ph: 0.9,
+                        self.model.is_training_gen_ph: False,
+                        self.model.is_training_disc_ph: True,
+                        self.model.batch_size_ph: self.batch_size,
+                    }
+                )
+                last_fake_disc_loss = sess_output[1]  # disc_loss
+                # print("train_op_disc_fake")
+            # print("train_op_disc done.")
+
+            # Step 2. train for generator
+            while last_gen_loss > gen_threshold:
+                sess_output = self.sess.run(
+                    fetches=[
+                        self.model.train_op_gen,
+                        self.model.gen_loss,
+                        ],
+                    feed_dict={
+                        self.model.lr_gen_ph: self.lr_gen,
+                        self.model.keep_prob_ph: 0.9,
+                        self.model.is_training_gen_ph: True,
+                        self.model.is_training_disc_ph: False,
+                        self.model.input_image_ph: batch_data.images,
+                        self.model.label_cls_ph: batch_data.labels,
+                        self.model.batch_size_ph: self.batch_size,
+                    }
+                )
+                last_gen_loss = sess_output[1]
+                # print("train_op_gen")
+            # print("train_op_gen done.")
+
+            # NOTE evaluation losses
             sess_input = [
-                self.model.train_op_disc_real,
+                self.model.gen_loss,
                 self.model.disc_loss_real,
                 self.model.cls_loss_real,
+                self.model.disc_loss_fake,
+                self.model.cls_loss_fake,
                 self.model.correct_count,
                 self.model.conf_matrix,
             ]
             sess_output = self.sess.run(
                 fetches=sess_input,
                 feed_dict={
-                    self.model.lr_disc_ph: self.lr_disc,
                     self.model.keep_prob_ph: 0.9,
                     self.model.is_training_gen_ph: False,
-                    self.model.is_training_disc_ph: True,
-                    self.model.input_image_ph: batch_data.images,
-                    self.model.label_cls_ph: batch_data.labels,
-                    self.model.batch_size_ph: self.batch_size,
-                }
-            )
-            accum_real_disc_loss += sess_output[1]  # disc_loss
-            accum_real_cls_loss += sess_output[2]  # cls loss
-            accum_correct_count += sess_output[-2]
-            if accum_conf_matrix is None:
-                accum_conf_matrix = sess_output[-1]
-            else:
-                accum_conf_matrix += sess_output[-1]
-
-            # train on fake sample
-            sess_input = [
-                self.model.train_op_disc_fake,
-                self.model.disc_loss_fake,
-                self.model.cls_loss_fake,
-                self.model.global_step_disc,
-            ]
-            sess_output = self.sess.run(
-                fetches=sess_input,
-                feed_dict={
-                    self.model.lr_disc_ph: self.lr_disc,
-                    self.model.keep_prob_ph: 0.9,
-                    self.model.is_training_gen_ph: False,
-                    self.model.is_training_disc_ph: True,
-                    self.model.input_image_ph: batch_data.images,
-                    self.model.label_cls_ph: batch_data.labels,
-                    self.model.batch_size_ph: self.batch_size,
-                }
-            )
-            accum_fake_disc_loss += sess_output[1]  # disc_loss
-            accum_fake_cls_loss += sess_output[2]  # cls loss
-            cur_step = sess_output[-1]
-
-            # Step 2. train for generator
-            sess_input = [
-                self.model.train_op_gen,
-                self.model.gen_loss,
-                self.model.cls_loss_fake,
-            ]
-            sess_output = self.sess.run(
-                fetches=sess_input,
-                feed_dict={
-                    self.model.lr_gen_ph: self.lr_gen,
-                    self.model.keep_prob_ph: 0.9,
-                    self.model.is_training_gen_ph: True,
                     self.model.is_training_disc_ph: False,
+                    self.model.input_image_ph: batch_data.images,
+                    self.model.label_cls_ph: batch_data.labels,
                     self.model.batch_size_ph: self.batch_size,
                 }
             )
-            accum_gen_loss += sess_output[1]
-            # accum_gen_loss += sess_output[2]
+            last_gen_loss = sess_output[0]
+            last_real_disc_loss = sess_output[1]
+            last_real_cls_loss = sess_output[2]
+            last_fake_disc_loss = sess_output[3]
+            last_fake_cls_loss = sess_output[4]
+
+            last_correct_count = sess_output[-2]
+            last_conf_matrix = sess_output[-1]
+
+
+            cur_step += 1
 
             if cur_step > 0 and cur_step % self.train_log_interval == 0:
                 duration = time.time() - start_time
-                real_disc_loss = accum_real_disc_loss / self.train_log_interval
-                real_cls_loss = accum_real_cls_loss / self.train_log_interval
-                fake_disc_loss = accum_fake_disc_loss / self.train_log_interval
-                fake_cls_loss = accum_fake_cls_loss / self.train_log_interval
-                gen_loss = accum_gen_loss / self.train_log_interval
-                accuracy = accum_correct_count / (self.batch_size * self.train_log_interval / 2)
+                # interval = self.train_log_interval / 2
+                interval = 1
+                real_disc_loss = last_real_disc_loss / interval
+                real_cls_loss = last_real_cls_loss / interval
+                fake_disc_loss = last_fake_disc_loss / interval
+                fake_cls_loss = last_fake_cls_loss / interval
+                gen_loss = last_gen_loss / interval
+                accuracy = last_correct_count / (self.batch_size * interval)
 
-                print("[step %d] training loss : r_disc. = %.4f, r_cls = %.4f, f_disc = %.4f, f_cls = %.4f, gen = %f, accuracy = %.4f"
-                      % (cur_step, real_disc_loss, real_cls_loss, fake_disc_loss, fake_cls_loss, gen_loss, accuracy))
+                # print("[step %d] training loss : r_disc. = %.4f, r_cls = %.4f, f_disc = %.4f, f_cls = %.4f, gen = %f, accuracy = %.4f"
+                #       % (cur_step, real_disc_loss, real_cls_loss, fake_disc_loss, fake_cls_loss, gen_loss, accuracy))
+
+                print("[step %d] training loss : r_disc. = %.4f, f_disc = %.4f, gen = %f"
+                      % (cur_step, real_disc_loss, fake_disc_loss, gen_loss))
 
                 # log for tensorboard
                 custom_summaries = [
@@ -236,17 +274,11 @@ class Classifier:
                 self.train_summary_writer.flush()
 
                 # reset local accumulations
-                accum_real_disc_loss = .0
-                accum_real_cls_loss = .0
-                accum_fake_disc_loss = .0
-                accum_fake_cls_loss = .0
-                accum_gen_loss = .0
-
-                accum_correct_count = .0
-                accum_conf_matrix = None
+                last_correct_count = .0
+                last_conf_matrix = None
 
             if cur_step > 0 and cur_step % self.valid_log_interval == 0:
-                real_disc_loss, real_cls_loss, fake_disc_loss, fake_cls_loss, gen_loss, accuracy, valid_conf_matrix = self.valid()
+                real_disc_loss, real_cls_loss, fake_disc_loss, fake_cls_loss, gen_loss, accuracy, valid_conf_matrix = self.valid(step=cur_step)
 
                 print("\t... validation loss : r_disc. = %.4f, r_cls = %.4f, f_disc = %.4f, f_cls = %.4f, gen = %f, accuracy = %.4f"
                       % (real_disc_loss, real_cls_loss, fake_disc_loss, fake_cls_loss, gen_loss, accuracy))
@@ -281,11 +313,12 @@ class Classifier:
             if cur_step > 0 and cur_step % self.lr_decay_interval == 0:
                 self.lr_disc *= self.lr_decay_ratio
                 self.lr_gen *= self.lr_decay_ratio
+            if cur_step % self.lr_decay_interval == 0:
                 print("\t===> learning rate decayed to %f, %f" % (self.lr_disc, self.lr_gen))
 
         return
 
-    def valid(self):
+    def valid(self, step=None):
         self.valid_loader.reset()
 
         step_counter = .0
@@ -363,8 +396,8 @@ class Classifier:
 
             step_counter += 1
 
-        global_step = self.sess.run(self.model.global_step_disc)
-        cv2.imwrite("fake_images/step_%d_%s.jpg" % (global_step, self.valid_loader.label_name[fake_label]), fake_image)
+        # global_step = self.sess.run(self.model.global_step_disc)
+        cv2.imwrite("fake_images/step_%d_%s.jpg" % (step, self.valid_loader.label_name[fake_label]), fake_image)
 
         real_disc_loss = accum_real_disc_loss / step_counter
         real_cls_loss = accum_real_cls_loss / step_counter

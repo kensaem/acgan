@@ -26,6 +26,7 @@ def conv2d(x, W, stride=None, padding=None):
     padding = padding or 'SAME'
     return tf.nn.conv2d(x, W, strides=stride, padding=padding)
 
+
 def batch_normalization(x, is_training, scope='bn', epsilon=1e-5, decay=0.9):
     return tf.contrib.layers.batch_norm(
         x,

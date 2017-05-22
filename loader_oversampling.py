@@ -1,9 +1,12 @@
 from loader import *
 import math
-
+import random
 
 class LoaderOversampling(Loader):
     RawDataTuple = collections.namedtuple("RawDataTuple", ['path', 'label'])
+
+    data_each = {}
+    size_each = {}
 
     def __init__(self, data_path, batch_size):
         super().__init__(data_path, batch_size)
@@ -19,26 +22,46 @@ class LoaderOversampling(Loader):
             dir_path = os.path.join(self.data_path, dir_name)
             file_name_list = os.listdir(dir_path)
             print("\tNumber of files in %s = %d" % (dir_name, len(file_name_list)))
-            self.max_class_size = max(self.max_class_size, len(file_name_list))
-        print("Current maximum size for each class = %d" % self.max_class_size)
+            label = int(dir_name)
+            class_data = []
+            for file_name in file_name_list:
+                file_path = os.path.join(dir_path, file_name)
+                class_data.append(self.RawDataTuple(path=file_path, label=label))
+            class_data.sort()
+            self.data_each[label] = class_data
+            self.size_each[label] = len(file_name_list)
 
-        # Load data from directory with up-sampling
-        dir_name_list = os.listdir(self.data_path)
-        for dir_name in dir_name_list:
-            dir_path = os.path.join(self.data_path, dir_name)
-            file_name_list = os.listdir(dir_path)
-            current_class_size = 0
-            while (current_class_size + len(file_name_list)) <= self.max_class_size:
-                for file_name in file_name_list:
-                    file_path = os.path.join(dir_path, file_name)
-                    self.data.append(self.RawDataTuple(path=file_path, label=int(dir_name)))
-                current_class_size += len(file_name_list)
-            print("\tNumber of samples in %s = %d" % (dir_name, current_class_size))
-
-        self.data.sort()
-        print("\tTotal number of data = %d" % len(self.data))
+        total_size = 0
+        for label, size in self.size_each.items():
+            total_size += size
+        print("\tTotal number of data = %d" % total_size)
 
         print("...Loading done.")
         return
+
+    def get_batch(self, batch_size=None):
+        if batch_size is None:
+            batch_size = self.batch_size
+
+        batch = self.get_empty_batch(batch_size)
+        for idx in range(batch_size):
+            chosen_class = random.randrange(10)
+            chosen_sample_idx = random.randrange(self.size_each[chosen_class])
+            # print(chosen_class, chosen_sample_idx)
+
+            single_data = self.data_each[chosen_class][chosen_sample_idx]
+            image = cv2.imread(single_data.path, 1)
+
+            batch.images[idx, :, :, :] = image
+            batch.labels[idx] = single_data.label
+
+            # Verifying batch
+            # print(single_data.path)
+            # print(batch.images[idx, 0, 0, 0])
+            # print(batch.labels[idx])
+
+        self.cur_idx += batch_size
+
+        return batch
 
 
