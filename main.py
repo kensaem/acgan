@@ -28,7 +28,7 @@ tf.app.flags.DEFINE_boolean('use_ohem', True, 'use OHEM or not')
 tf.app.flags.DEFINE_integer('hard_sampling_factor', 2, 'searching window size for OHEM')
 
 tf.app.flags.DEFINE_boolean('use_oversampling', False, 'use oversampling for loader or not')
-tf.app.flags.DEFINE_string('model', 'vgg', 'base model to use (vgg / inc_res')
+tf.app.flags.DEFINE_string('model', 'vgg16', 'base model to use (vgg11 / vgg16 / vgg19 / incres_v1 / incres_v2 /incres_v3')
 
 FLAGS = tf.app.flags.FLAGS
 

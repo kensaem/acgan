@@ -40,11 +40,12 @@ def inception_block(x, name, is_training, scale_factor=0.1):
     return output
 
 
-def reduction_block(x, name, is_training):
+def reduction_block(x, name, is_training, with_maxpool=True):
     i_channels = int(x.get_shape()[3])
 
     with tf.variable_scope(name):
-        conn1 = tf.nn.max_pool(x, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME', data_format='NHWC')
+        if with_maxpool:
+            conn1 = tf.nn.max_pool(x, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME', data_format='NHWC')
 
         w_conv = weight_variable([1, 1, i_channels, i_channels/4], name=name+"_2_1")
         b_conv = bias_variable([i_channels/4], name=name+"_2_1")
@@ -68,7 +69,10 @@ def reduction_block(x, name, is_training):
         w_conv = weight_variable([3, 3, i_channels/2, i_channels/2], name=name+"_4_3")
         conn4 = conv2d(conn4, w_conv, stride=[1, 2, 2, 1], padding='SAME')
 
-        output = tf.concat(axis=3, values=[conn1, conn2, conn3, conn4])
+        if with_maxpool:
+            output = tf.concat(axis=3, values=[conn1, conn2, conn3, conn4])
+        else:
+            output = tf.concat(axis=3, values=[conn2, conn3, conn4])
         output = batch_normalization(x=output, is_training=is_training, scope="bn")
         output = tf.nn.relu(output)
 
@@ -114,7 +118,7 @@ def vgg_block(
 class Model:
     def __init__(self, model, optim, with_bn, with_dropout, with_residual=False):
         self.optim = optim
-        self.model = model
+        self.model = str(model)
 
         self.global_step = tf.Variable(0, trainable=False, name='global_step')
         self.keep_prob_placeholder = tf.placeholder(dtype=tf.float32, name='keep_probability')
@@ -137,10 +141,13 @@ class Model:
             name='batch_size_placeholder'
         )
 
-        if self.model == "inc_res":
+        if self.model.find("incres") >= 0:
             self.output = self.build_model_inception_res()
-        else:
+        elif self.model.find("vgg") >= 0:
             self.output = self.build_model_vgg(with_bn, with_dropout)
+        else:
+            print('Invalid model... [%s]!' % self.model)
+            exit(1)
         self.each_loss, self.accum_loss = self.build_loss()
         self.pred_label = tf.arg_max(tf.nn.softmax(self.output), 1)
 
@@ -174,32 +181,49 @@ class Model:
     def build_model_inception_res(self, name="inception_res_net"):
         output_t = self.build_augmentation(self.input_image_placeholder)
         with tf.variable_scope(name):
+
+            print(self.model)
+            if self.model == "incres_v1":
+                layers_size = [1, 1, 2, 2, 2]
+            elif self.model == "incres_v2":
+                layers_size = [2, 2, 3, 3, 3]
+            elif self.model == "incres_v3":
+                layers_size = [2, 2, 4, 4, 4]
+            else:
+                print("Invalid model [%s]" % self.model)
+                exit(1)
+
             output_t = vgg_block(
                 input_tensor=output_t,
-                output_channel=16,
+                output_channel=64,
                 layer_name="vgg_layer",
                 is_training=self.is_training_placeholder,
                 with_bn=True,
             )
 
-            output_t = inception_block(output_t, "inception_layer1", self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer1", self.is_training_placeholder)
-            output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 32])
-
-            output_t = inception_block(output_t, "inception_layer2", self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer2", self.is_training_placeholder)
+            for idx in range(layers_size[0]-1):
+                output_t = inception_block(output_t, "inception_layer1_"+str(idx), self.is_training_placeholder)
+            output_t = reduction_block(output_t, "reduction_layer1", self.is_training_placeholder, with_maxpool=False)
             output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 64])
 
-            output_t = inception_block(output_t, "inception_layer3", self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer3", self.is_training_placeholder)
+            for idx in range(layers_size[1]):
+                output_t = inception_block(output_t, "inception_layer2_"+str(idx), self.is_training_placeholder)
+            output_t = reduction_block(output_t, "reduction_layer2", self.is_training_placeholder)
             output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 128])
 
-            output_t = inception_block(output_t, "inception_layer4", self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer4", self.is_training_placeholder)
+            for idx in range(layers_size[2]):
+                output_t = inception_block(output_t, "inception_layer3_"+str(idx), self.is_training_placeholder)
+            output_t = reduction_block(output_t, "reduction_layer3", self.is_training_placeholder)
             output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 256])
 
-            output_t = inception_block(output_t, "inception_layer5", self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer5", self.is_training_placeholder)
+            for idx in range(layers_size[3]):
+                output_t = inception_block(output_t, "inception_layer4_"+str(idx), self.is_training_placeholder)
+            output_t = reduction_block(output_t, "reduction_layer4", self.is_training_placeholder)
+            output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 512])
+
+            for idx in range(layers_size[4]):
+                output_t = inception_block(output_t, "inception_layer5_"+str(idx), self.is_training_placeholder)
+            output_t = reduction_block(output_t, "reduction_layer5", self.is_training_placeholder, with_maxpool=False)
             output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 512])
 
             # input size 1 w/ channel 512 => fc layer
@@ -223,9 +247,13 @@ class Model:
         return output_t
 
     def build_model_vgg(self, with_bn, with_dropout, name="vgg"):
-        # layers_size = [1, 1, 2, 2, 2]  #vgg11
-        layers_size = [2, 2, 3, 3, 3]  #vgg16
-        # layers_size = [2, 2, 4, 4, 4]  #vgg19
+        if self.model == "vgg11":
+            layers_size = [1, 1, 2, 2, 2]
+        elif self.model == "vgg19":
+            layers_size = [2, 2, 4, 4, 4]
+        else: # vgg16
+            layers_size = [2, 2, 3, 3, 3]
+
 
         output_tensor = self.build_augmentation(self.input_image_placeholder)
         with tf.variable_scope(name):
