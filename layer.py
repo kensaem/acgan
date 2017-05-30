@@ -27,14 +27,30 @@ def conv2d(x, W, stride=None, padding=None):
     return tf.nn.conv2d(x, W, strides=stride, padding=padding)
 
 
-def batch_normalization(x, is_training, scope='bn', epsilon=1e-5, decay=0.9):
-    return tf.contrib.layers.batch_norm(
-        x,
-        decay=decay,
-        updates_collections=None,
-        epsilon=epsilon,
-        scale=True,
-        is_training=is_training,
-        scope=scope
-    )
+def batch_normalization(x, is_training, scope, pop_mean=None, pop_var=None, epsilon=1e-5, decay=0.9):
+    with tf.variable_scope(scope):
+        shape = x.get_shape()
+        size = shape.as_list()[-1]
+        axes = list(range(len(shape)-1))
+
+        scale = tf.get_variable('scale', [size], initializer=tf.truncated_normal_initializer(stddev=0.02))
+        offset = tf.get_variable('offset', [size], initializer=tf.constant_initializer(0.0))
+
+        # device 2
+        if pop_mean is None and pop_var is None:
+            pop_mean = tf.get_variable('pop_mean', [size], initializer=tf.zeros_initializer(tf.float32), trainable=False)
+            pop_var = tf.get_variable('pop_var', [size], initializer=tf.ones_initializer(tf.float32), trainable=False)
+
+        batch_mean, batch_var = tf.nn.moments(x, axes)
+
+        def batch_statistics():
+            train_mean_op = tf.assign(pop_mean, pop_mean * decay + batch_mean * (1 - decay))
+            train_var_op = tf.assign(pop_var, pop_var * decay + batch_var * (1 - decay))
+            with tf.control_dependencies([train_mean_op, train_var_op]):
+                return tf.nn.batch_normalization(x, batch_mean, batch_var, offset, scale, epsilon)
+
+        def population_statistics():
+            return tf.nn.batch_normalization(x, pop_mean, pop_var, offset, scale, epsilon)
+
+        return tf.cond(is_training, batch_statistics, population_statistics)
 
