@@ -2,7 +2,7 @@ from loader import *
 import math
 import random
 
-class LoaderOversampling(Loader):
+class Cifar10LoaderOversampling(Cifar10Loader):
     RawDataTuple = collections.namedtuple("RawDataTuple", ['path', 'label'])
 
     data_each = {}

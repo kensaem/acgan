@@ -11,19 +11,6 @@ BatchTuple = collections.namedtuple("BatchTuple", ['images', 'labels'])
 class Loader:
     RawDataTuple = collections.namedtuple("RawDataTuple", ['path', 'label'])
 
-    label_name = [
-        "airplane",
-        "automobile",
-        "bird",
-        "cat",
-        "deer",
-        "dog",
-        "frog",
-        "horse",
-        "ship",
-        "truck"
-    ]
-
     def __init__(self, data_path, batch_size):
         self.sess = tf.Session()
         self.image_info = {
@@ -110,7 +97,34 @@ class Loader:
         return batch
 
 
+class Cifar10Loader(Loader):
+    label_name = [
+        "airplane",
+        "automobile",
+        "bird",
+        "cat",
+        "deer",
+        "dog",
+        "frog",
+        "horse",
+        "ship",
+        "truck"
+    ]
 
+
+class OcrLoader(Loader):
+    label_name = [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+    ]
 
 
 

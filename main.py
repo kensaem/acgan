@@ -39,7 +39,7 @@ class Classifier:
         self.model = Model(FLAGS.model, FLAGS.optim, FLAGS.use_bn, FLAGS.use_dropout)
         self.batch_size = FLAGS.batch_size
         if FLAGS.use_oversampling:
-            self.train_loader = LoaderOversampling(data_path=os.path.join(FLAGS.data_path, "train"), batch_size=self.batch_size)
+            self.train_loader = Cifar10LoaderOversampling(data_path=os.path.join(FLAGS.data_path, "train"), batch_size=self.batch_size)
         else:
             self.train_loader = Loader(data_path=os.path.join(FLAGS.data_path, "train"), batch_size=self.batch_size)
         self.valid_loader = Loader(data_path=os.path.join(FLAGS.data_path, "val"), batch_size=self.batch_size)

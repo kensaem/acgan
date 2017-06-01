@@ -17,10 +17,10 @@ tf.app.flags.DEFINE_boolean('train_continue', False, 'flag for continue training
 tf.app.flags.DEFINE_boolean('valid_only', False, 'flag for validation only. this will make train_continue flag ignored')
 
 tf.app.flags.DEFINE_integer('batch_size', 64, 'mini-batch size for training')
-tf.app.flags.DEFINE_float('lr_disc', 1e-4, 'initial learning rate for discriminator')
-tf.app.flags.DEFINE_float('lr_gen', 2e-4, 'initial learning rate for generator')
+tf.app.flags.DEFINE_float('lr_disc', 2e-5, 'initial learning rate for discriminator')
+tf.app.flags.DEFINE_float('lr_gen', 4e-5, 'initial learning rate for generator')
 tf.app.flags.DEFINE_float('lr_decay_ratio', 1.0, 'ratio for decaying learning rate')
-tf.app.flags.DEFINE_integer('lr_decay_interval', 2000, 'step interval for decaying learning rate')
+tf.app.flags.DEFINE_integer('lr_decay_interval', 10000, 'step interval for decaying learning rate')
 tf.app.flags.DEFINE_integer('train_log_interval', 200, 'step interval for triggering print logs of train')
 tf.app.flags.DEFINE_integer('valid_log_interval', 1000, 'step interval for triggering validation')
 
@@ -31,6 +31,8 @@ tf.app.flags.DEFINE_boolean('use_oversampling', False, 'use over-sampling for lo
 
 FLAGS = tf.app.flags.FLAGS
 
+print("Learning rate for discriminator = %e" % FLAGS.lr_disc)
+print("Learning rate for generator = %e" % FLAGS.lr_gen)
 
 class GanLearner:
     def __init__(self):
@@ -39,10 +41,10 @@ class GanLearner:
         self.model = ACGANModel(batch_size=self.batch_size)
 
         if FLAGS.use_oversampling:
-            self.train_loader = LoaderOversampling(data_path=os.path.join(FLAGS.data_path, "train"), batch_size=self.batch_size)
+            self.train_loader = Cifar10LoaderOversampling(data_path=os.path.join(FLAGS.data_path, "train"), batch_size=self.batch_size)
         else:
-            self.train_loader = Loader(data_path=os.path.join(FLAGS.data_path, "train"), batch_size=self.batch_size)
-        self.valid_loader = Loader(data_path=os.path.join(FLAGS.data_path, "val"), batch_size=self.batch_size)
+            self.train_loader = OcrLoader(data_path=os.path.join(FLAGS.data_path, "train"), batch_size=self.batch_size)
+        self.valid_loader = OcrLoader(data_path=os.path.join(FLAGS.data_path, "val"), batch_size=self.batch_size)
 
         self.epoch_counter = 1
         self.lr_gen = FLAGS.lr_gen
@@ -201,6 +203,7 @@ class GanLearner:
                         self.model.disc_loss,
                         self.model.gen_loss,
                         self.model.most_realistic_fake_image,
+                        self.model.most_realistic_fake_class,
                         summaries,
                         ],
                     feed_dict={
@@ -215,9 +218,13 @@ class GanLearner:
                 )
                 last_disc_loss = sess_output[1]
                 last_gen_loss = sess_output[2]
+                fake_label = sess_output[4][0]
                 # print("\tTrain gen.  >> disc. = %f, gen. =%f" % (last_disc_loss, last_gen_loss))
                 if cur_step > 0 and cur_step % self.train_log_interval == 0:
-                    cv2.imwrite("fake_images/step_%d_train.jpg" % (cur_step), (sess_output[3][0] + 1.0) * (255.0/2.0))
+                    cv2.imwrite(
+                        "fake_images/step_%d_%s_train.jpg" % (cur_step ,self.valid_loader.label_name[fake_label]),
+                        (sess_output[3][0] + 1.0) * (255.0/2.0)
+                    )
                 last_summaries = sess_output[-1]
 
             # NOTE evaluation losses
@@ -263,13 +270,14 @@ class GanLearner:
                 # cls_loss_real = last_real_cls_loss / interval
                 # cls_loss_fake = last_fake_cls_loss / interval
                 gen_loss = last_gen_loss / interval
+                disc_loss = last_disc_loss / interval
                 # accuracy = last_correct_count / (self.batch_size * interval)
 
                 # print("[step %d] training loss : disc_real = %.4f, cls_real = %.4f, disc_fake = %.4f, cls_fake = %.4f, gen = %f, accuracy = %.4f"
                 #       % (cur_step, real_disc_loss, real_cls_loss, fake_disc_loss, fake_cls_loss, gen_loss, accuracy))
 
-                print("[step %d] training loss : disc_real = %.4f, disc_fake = %.4f, gen = %f"
-                      % (cur_step, disc_loss_real, disc_loss_fake, gen_loss))
+                print("[step %d] training loss : disc = %.4f, disc_real = %.4f, disc_fake = %.4f, gen = %f"
+                      % (cur_step, disc_loss, disc_loss_real, disc_loss_fake, gen_loss))
 
                 # print("[step %d] training loss : disc = %.4f, gen = %f"
                 #       % (cur_step, last_disc_loss, last_gen_loss))
@@ -281,7 +289,8 @@ class GanLearner:
                     tf.Summary.Value(tag='disc_loss_fake', simple_value=disc_loss_fake),
                     # tf.Summary.Value(tag='cls_loss_real', simple_value=cls_loss_real),
                     # tf.Summary.Value(tag='cls_loss_fake', simple_value=cls_loss_fake),
-                    tf.Summary.Value(tag='loss_gen', simple_value=gen_loss),
+                    tf.Summary.Value(tag='disc_loss', simple_value=disc_loss),
+                    tf.Summary.Value(tag='gen_loss', simple_value=gen_loss),
                     # tf.Summary.Value(tag='accuracy', simple_value=accuracy),
                     tf.Summary.Value(tag='learning rate for discriminator', simple_value=self.lr_disc),
                     tf.Summary.Value(tag='learning rate for generator', simple_value=self.lr_gen),
@@ -348,6 +357,7 @@ class GanLearner:
         accum_disc_loss_fake = .0
         accum_fake_cls_loss = .0
         accum_gen_loss = .0
+        accum_disc_loss = .0
 
         accum_correct_count = .0
         accum_conf_matrix = None
@@ -362,37 +372,12 @@ class GanLearner:
                 # print('%d validation complete' % self.epoch_counter)
                 break
 
-            # Validation for real samples
-            sess_input = [
-                self.model.disc_loss_real,
-                # self.model.cls_loss_real,
-                # self.model.correct_count,
-                # self.model.conf_matrix,
-            ]
-            sess_output = self.sess.run(
-                fetches=sess_input,
-                feed_dict={
-                    self.model.keep_prob_ph: 1.0,
-                    self.model.is_training_gen_ph: False,
-                    self.model.is_training_disc_ph: False,
-                    self.model.input_image_ph: batch_data.images,
-                    self.model.label_cls_ph: batch_data.labels,
-                    self.model.batch_size_ph: valid_batch_size,
-                }
-            )
-            accum_disc_loss_real += sess_output[0]
-            # accum_cls_loss_real += sess_output[1]
-            # accum_correct_count += sess_output[-2]
-            # if accum_conf_matrix is None:
-            #     accum_conf_matrix = sess_output[-1]
-            # else:
-            #     accum_conf_matrix += sess_output[-1]
-
-            # Validation for fake samples
+            # Validation for real & fake samples concurrently.
             sess_input = [
                 self.model.gen_loss,
                 self.model.disc_loss_fake,
-                # self.model.cls_loss_fake,
+                self.model.disc_loss_real,
+                self.model.disc_loss,
                 self.model.most_realistic_fake_image,
                 self.model.most_realistic_fake_class,
             ]
@@ -409,21 +394,23 @@ class GanLearner:
             )
             accum_gen_loss += sess_output[0]
             accum_disc_loss_fake += sess_output[1]
-            # accum_fake_cls_loss += sess_output[2]
+            accum_disc_loss_real += sess_output[2]
+            accum_disc_loss += sess_output[3]
 
-            fake_image = (sess_output[-2][0] + 1.0) * (255.0/2.0)
             fake_label = sess_output[-1][0]
+            fake_image = (sess_output[-2][0] + 1.0) * (255.0/2.0)
 
             step_counter += 1
 
         # global_step = self.sess.run(self.model.global_step_disc)
-        cv2.imwrite("fake_images/step_%d_%s.jpg" % (step, self.valid_loader.label_name[fake_label]), fake_image)
+        cv2.imwrite("fake_images/step_%d_%s_valid.jpg" % (step, self.valid_loader.label_name[fake_label]), fake_image)
 
         disc_loss_real = accum_disc_loss_real / step_counter
         disc_loss_fake = accum_disc_loss_fake / step_counter
         # cls_loss_real = accum_cls_loss_real / step_counter
         # cls_loss_fake = accum_fake_cls_loss / step_counter
         gen_loss = accum_gen_loss / step_counter
+        disc_loss = accum_disc_loss /step_counter
         # accuracy = accum_correct_count / (valid_batch_size * step_counter)
 
         # log for tensorboard
@@ -433,7 +420,8 @@ class GanLearner:
             tf.Summary.Value(tag='disc_loss_fake', simple_value=disc_loss_fake),
             # tf.Summary.Value(tag='cls_loss_real', simple_value=cls_loss_real),
             # tf.Summary.Value(tag='cls_loss_fake', simple_value=cls_loss_fake),
-            tf.Summary.Value(tag='loss_gen', simple_value=gen_loss),
+            tf.Summary.Value(tag='gen_loss', simple_value=gen_loss),
+            tf.Summary.Value(tag='disc_loss', simple_value=disc_loss),
             # tf.Summary.Value(tag='accuracy', simple_value=accuracy),
         ]
         self.valid_summary_writer.add_summary(tf.Summary(value=custom_summaries), cur_step)

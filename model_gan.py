@@ -48,8 +48,8 @@ def deconv_block(
 
         b_conv = bias_variable([output_shape[-1]], name=layer_name)
         output_t = tf.nn.bias_add(output_t, b_conv)
-        # if with_bn:
-        #     output_t = batch_normalization(output_t, is_training=is_training, scope='bn')
+        if with_bn:
+            output_t = batch_normalization(output_t, is_training=is_training, scope='bn')
 
         output_t = activation(output_t)
     return output_t
@@ -101,7 +101,6 @@ class ACGANModel:
 
         # NOTE Build model for generator
         self.noise_t = tf.random_normal(shape=[self.batch_size_ph, self.noise_size])
-        # self.noise_t = tf.random_uniform(shape=[self.batch_size_ph, self.noise_size], minval=-1.0, maxval=1.0)
         self.label_cond_t = tf.random_normal((self.batch_size_ph, self.cond_size))
         sample_cls = tf.multinomial(tf.ones((self.batch_size_ph, 10), dtype=tf.float32) / 10, 1)
         self.label_fake_cls_t = tf.to_int32(tf.squeeze(sample_cls, -1))
@@ -121,8 +120,8 @@ class ACGANModel:
         tf.summary.histogram("real_image", self.real_image_t)
         tf.summary.histogram("fake_image", self.fake_image_t)
 
-        self.disc_fake_t = self.build_discriminator(input_t=self.fake_image_t)
-        self.disc_real_t = self.build_discriminator(input_t=self.real_image_t, reuse=True)
+        self.disc_fake_t, self.ctgr_fake_t = self.build_discriminator(input_t=self.fake_image_t)
+        self.disc_real_t, self.ctgr_real_t = self.build_discriminator(input_t=self.real_image_t, reuse=True)
 
         # NOTE Discriminator loss
         print(self.disc_real_t)
@@ -154,23 +153,34 @@ class ACGANModel:
             )
         )
 
+        # NOTE Category loss
+        self.ctgr_loss_real = self.build_cls_loss(labels=self.label_cls_ph, logits=self.ctgr_real_t)
+        self.ctgr_loss_fake = self.build_cls_loss(labels=self.label_fake_cls_t, logits=self.ctgr_fake_t)
+        self.ctgr_loss = (self.ctgr_loss_real + self.ctgr_loss_fake) / 2.0
+
+        self.disc_loss += self.ctgr_loss
+        self.gen_loss += self.ctgr_loss
+
         # NOTE build optimizers
+        optimizer = tf.train.RMSPropOptimizer
+        # optimizer = tf.train.AdamOptimizer
+
         t_vars = tf.trainable_variables()
+        # t_vars = tf.all_variables()
         d_vars = [var for var in t_vars if "discriminator" in var.name]
         print("==== Variables for discriminator ====")
         for var in d_vars:
             print(var.name)
-
-        self.train_op_disc = tf.train.RMSPropOptimizer(self.lr_disc_ph).minimize(
-            loss=self.disc_loss,
+        self.train_op_disc = optimizer(self.lr_disc_ph).minimize(
+            loss=(self.disc_loss + self.ctgr_loss),
             global_step=self.global_step_disc,
             var_list=d_vars,
         )
-        # self.train_op_disc_real = tf.train.AdamOptimizer(self.lr_disc_ph).minimize(
+        # self.train_op_disc_real = optimizer(self.lr_disc_ph).minimize(
         #     loss=self.disc_loss_real,
         #     var_list=d_vars,
         # )
-        # self.train_op_disc_fake = tf.train.AdamOptimizer(self.lr_disc_ph).minimize(
+        # self.train_op_disc_fake = optimizer(self.lr_disc_ph).minimize(
         #     loss=self.disc_loss_fake,
         #     var_list=d_vars,
         # )
@@ -179,8 +189,8 @@ class ACGANModel:
         print("==== Variables for generator ====")
         for var in g_vars:
             print(var.name)
-        self.train_op_gen = tf.train.RMSPropOptimizer(self.lr_gen_ph).minimize(
-            loss=self.gen_loss,
+        self.train_op_gen = optimizer(self.lr_gen_ph).minimize(
+            loss=(self.gen_loss + self.ctgr_loss),
             global_step=self.global_step_gen,
             var_list=g_vars,
         )
@@ -212,16 +222,16 @@ class ACGANModel:
                 output_t = input_noise_t
 
                 # class_embed_t = tf.one_hot(input_class_t, self.latent_cls_size)
-                # output_t = tf.concat([input_noise_t, class_embed_t], axis=-1)
 
-                # params = weight_variable([10, self.latent_cls_size], name="class_params")
-                # class_embed_t = tf.nn.embedding_lookup(params, input_class_t)
-                # output_t = tf.concat([input_noise_t, class_embed_t], axis=-1)
+                params = weight_variable([10, self.latent_cls_size], name="class_params")
+                class_embed_t = tf.nn.embedding_lookup(params, input_class_t)
+
+                output_t = tf.concat([input_noise_t, class_embed_t], axis=-1)
 
             # NOTE from DCGAN model
             if False:
-                output_t = tf.reshape(output_t, [-1, 1, 1, self.noise_size])
-                # output_t = tf.reshape(output_t, [-1, 1, 1, self.noise_size+self.latent_cls_size])
+                # output_t = tf.reshape(output_t, [-1, 1, 1, self.noise_size])
+                output_t = tf.reshape(output_t, [-1, 1, 1, self.noise_size+self.latent_cls_size])
                 output_t = deconv_block(
                     output_t,
                     [batch_size, 2, 2, 512],
@@ -233,16 +243,9 @@ class ACGANModel:
                 )
 
             else:
-                # with tf.variable_scope("fc_1"):
-                #     w_fc = weight_variable([self.noise_size, 512], name="fc")
-                #     b_fc = bias_variable([512], name="fc")
-                #     output_t = tf.nn.bias_add(tf.matmul(output_t, w_fc), b_fc)
-                #     output_t = batch_normalization(output_t, is_training=self.is_training_gen_ph, scope="bn")
-                #     output_t = activation(output_t)
-
-                with tf.variable_scope("fc_2"):
-                    w_fc = weight_variable([self.noise_size, 512*2*2], name="fc_2")
-                    b_fc = bias_variable([512*2*2], name="fc_2")
+                with tf.variable_scope("fc"):
+                    w_fc = weight_variable([self.noise_size+self.latent_cls_size, 512*2*2], name="fc")
+                    b_fc = bias_variable([512*2*2], name="fc")
                     output_t = tf.nn.bias_add(tf.matmul(output_t, w_fc), b_fc)
                     output_t = tf.reshape(output_t, [-1, 2, 2, 512])
                     # output_t = batch_normalization(output_t, is_training=self.is_training_gen_ph, scope="bn")
@@ -298,12 +301,14 @@ class ACGANModel:
             activation=leaky_relu,
             name="discriminator"
     ):
-        # output_t = tf.cond(
-        #     self.is_training_disc_ph,
-        #     lambda: tf.map_fn(lambda img: tf.image.random_flip_left_right(img), input_t),
-        #     lambda: input_t
-        # )
-        output_t = input_t
+        if False:
+            output_t = tf.cond(
+                self.is_training_disc_ph,
+                lambda: tf.map_fn(lambda img: tf.image.random_flip_left_right(img), input_t),
+                lambda: input_t
+            )
+        else:
+            output_t = input_t
 
         with tf.variable_scope(name, reuse=reuse):
             # input size 32
@@ -315,7 +320,6 @@ class ACGANModel:
                 activation=activation,
                 with_bn=False,
             )
-            # output_t = tf.nn.max_pool(output_t, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
             # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 64])
 
             # input size 16
@@ -326,7 +330,6 @@ class ACGANModel:
                 is_training=self.is_training_disc_ph,
                 activation=activation,
             )
-            # output_t = tf.nn.max_pool(output_t, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
             # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 128])
 
             # input size 8
@@ -337,7 +340,6 @@ class ACGANModel:
                 is_training=self.is_training_disc_ph,
                 activation=activation,
             )
-            # output_t = tf.nn.max_pool(output_t, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
             # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 256])
 
             # input size 4
@@ -348,47 +350,41 @@ class ACGANModel:
                 is_training=self.is_training_disc_ph,
                 activation=activation,
             )
-            # output_t = tf.nn.max_pool(output_t, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
-
-            # input size 2
-            # output_t = cnn_block(
-            #     input_t=output_t,
-            #     output_channel=512,
-            #     layer_name="layer5",
-            #     is_training=self.is_training_disc_ph,
-            #     activation=activation,
-            # )
-            # output_t = tf.nn.max_pool(output_t, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME')
 
             # input size 2 w/ channel 512 => fc layer
+            output_t = tf.reshape(output_t, [self.batch_size, 512*2*2])
             output_share_t = output_t
 
             # Branch 1. discriminator for real / fake
             output_disc_t = output_share_t
-            print(output_disc_t)
-            output_disc_t = tf.reshape(output_disc_t, [self.batch_size, 512*2*2])
-            # with tf.variable_scope("disc_fc_1"):
-            #     w_conv = weight_variable([512*2*2, 512], name="disc_fc_1")
-            #     b_conv = bias_variable([512], name="disc_fc_1")
-            #     output_disc_t = tf.matmul(output_disc_t, w_conv) + b_conv
-            #     output_disc_t = batch_normalization(x=output_disc_t, is_training=self.is_training_disc_ph, scope="bn")
-            #     output_disc_t = activation(output_disc_t)
-
-            with tf.variable_scope("disc_fc_2"):
-                w_conv = weight_variable([512*2*2, 1], name="disc_fc_2")
-                b_conv = bias_variable([1], name="disc_fc_2")
+            with tf.variable_scope("disc_fc"):
+                w_conv = weight_variable([512*2*2, 1], name="disc_fc")
+                b_conv = bias_variable([1], name="disc_fc")
                 output_disc_t = tf.matmul(output_disc_t, w_conv) + b_conv
 
-        return output_disc_t
+            # Branch 2. discriminator for category
+            output_ctgr_t = output_share_t
+            with tf.variable_scope("ctgr_fc_1"):
+                w_conv = weight_variable([512*2*2, 512], name="ctgr_fc_1")
+                b_conv = bias_variable([512], name="ctgr_fc_1")
+                output_ctgr_t = tf.matmul(output_ctgr_t, w_conv) + b_conv
+                output_ctgr_t = activation(output_ctgr_t)
 
-    def build_cls_loss(self, labels, outputs):
+            with tf.variable_scope("ctgr_fc_2"):
+                w_conv = weight_variable([512, 10], name="ctgr_fc_2")
+                b_conv = bias_variable([10], name="ctgr_fc_2")
+                output_ctgr_t = tf.matmul(output_ctgr_t, w_conv) + b_conv
 
-        # each_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=outputs)
-        # accum_loss = tf.reduce_mean(each_loss, axis=[0])
+        return output_disc_t, output_ctgr_t
+
+    def build_cls_loss(self, labels, logits):
+
+        each_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=logits)
+        accum_loss = tf.reduce_mean(each_loss, axis=[0])
 
         # make soft soft-max cross entropy
-        onehot_labels = tf.one_hot(labels, 10)
-        accum_loss = tf.losses.softmax_cross_entropy(onehot_labels=onehot_labels, logits=outputs, label_smoothing=0)
+        # onehot_labels = tf.one_hot(labels, 10)
+        # accum_loss = tf.losses.softmax_cross_entropy(onehot_labels=onehot_labels, logits=logits, label_smoothing=0)
 
         return accum_loss
 
