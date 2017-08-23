@@ -1,387 +1,398 @@
-import tensorflow as tf
+from parser import st2list
+
 from layer import *
 
 
-def inception_block(x, name, is_training, scale_factor=0.1):
-    i_channels = int(x.get_shape()[3])
-
-    with tf.variable_scope(name):
-        w_conv = weight_variable([1, 1, i_channels, i_channels/8], name=name+"_1")
-        b_conv = bias_variable([i_channels/8], name=name+"_1")
-        output_1 = tf.nn.relu(conv2d(x, w_conv) + b_conv)
-
-        w_conv = weight_variable([1, 1, i_channels, i_channels/8], name=name+"_2_1")
-        b_conv= bias_variable([i_channels/8], name=name+"_2_1")
-        output_2 = tf.nn.relu(conv2d(x, w_conv) + b_conv)
-
-        w_conv = weight_variable([3, 3, i_channels/8, i_channels/8], name=name+"_2_2")
-        b_conv = bias_variable([i_channels/8], name=name+"_2_2")
-        output_2 = tf.nn.relu(conv2d(output_2, w_conv) + b_conv)
-
-        w_conv = weight_variable([1, 1, i_channels, i_channels/8], name=name+"_3_1")
-        b_conv = bias_variable([i_channels/8], name=name+"_3_1")
-        output_3 = tf.nn.relu(conv2d(x, w_conv) + b_conv)
-
-        w_conv = weight_variable([3, 3, i_channels/8, i_channels/8], name=name+"_3_2")
-        b_conv = bias_variable([i_channels/8], name=name+"_3_2")
-        output_3 = tf.nn.relu(conv2d(output_3, w_conv) + b_conv)
-
-        w_conv = weight_variable([3, 3, i_channels/8, i_channels/8], name=name+"_3_3")
-        b_conv= bias_variable([i_channels/8], name=name+"_3_3")
-        output_3 = tf.nn.relu(conv2d(output_3, w_conv) + b_conv)
-
-        output_concat = tf.concat(axis=3, values=[output_1, output_2, output_3])
-
-        w_conv = weight_variable([1, 1, i_channels/8*3, i_channels], name=name+"_concat")
-        output_concat = conv2d(output_concat, w_conv)
-        output = x + scale_factor * output_concat
-        output = batch_normalization(x=output, is_training=is_training, scope="bn")
-        output = tf.nn.relu(output)
-    return output
+def leaky_relu(x, neg_thres=0.2):
+    y = tf.maximum(x, neg_thres*x)
+    return y
 
 
-def reduction_block(x, name, is_training, with_maxpool=True):
-    i_channels = int(x.get_shape()[3])
-
-    with tf.variable_scope(name):
-        if with_maxpool:
-            conn1 = tf.nn.max_pool(x, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME', data_format='NHWC')
-
-        w_conv = weight_variable([1, 1, i_channels, i_channels/4], name=name+"_2_1")
-        b_conv = bias_variable([i_channels/4], name=name+"_2_1")
-        conn2 = tf.nn.relu(conv2d(x, w_conv) + b_conv)
-        w_conv = weight_variable([3, 3, i_channels/4, i_channels/4], name=name+"_2_2")
-
-        conn2 = conv2d(conn2, w_conv, stride=[1, 2, 2, 1], padding='SAME')
-
-        w_conv = weight_variable([1, 1, i_channels, i_channels/4], name=name+"_3_1")
-        b_conv = bias_variable([i_channels/4], name=name+"_3_1")
-        conn3 = tf.nn.relu(conv2d(x, w_conv) + b_conv)
-        w_conv = weight_variable([3, 3, i_channels/4, i_channels/4], name=name+"_3_2")
-        conn3 = conv2d(conn3, w_conv, stride=[1, 2, 2, 1], padding='SAME')
-
-        w_conv = weight_variable([1, 1, i_channels, i_channels/2], name=name+"_4_1")
-        b_conv = bias_variable([i_channels/2], name=name+"_4_1")
-        conn4 = tf.nn.relu(conv2d(x, w_conv) + b_conv)
-        w_conv = weight_variable([3, 3, i_channels/2, i_channels/2], name=name+"_4_2")
-        b_conv = bias_variable([i_channels/2], name=name+"_4_2")
-        conn4 = tf.nn.relu(conv2d(conn4, w_conv) + b_conv)
-        w_conv = weight_variable([3, 3, i_channels/2, i_channels/2], name=name+"_4_3")
-        conn4 = conv2d(conn4, w_conv, stride=[1, 2, 2, 1], padding='SAME')
-
-        if with_maxpool:
-            output = tf.concat(axis=3, values=[conn1, conn2, conn3, conn4])
-        else:
-            output = tf.concat(axis=3, values=[conn2, conn3, conn4])
-        output = batch_normalization(x=output, is_training=is_training, scope="bn")
-        output = tf.nn.relu(output)
-
-    return output
-
-
-def vgg_block(
-        input_tensor,
+def cnn_block(
+        input_t,
         output_channel,
         layer_name,
+        kernel_size=4,
+        stride=2,
         activation=tf.nn.relu,
         is_training=None,
         with_bn=True,
-        with_dropout=False,
-        keep_prob_placeholder=None,
+
 ):
-    if with_bn:
-        assert(is_training is not None)
-
-    input_channel = input_tensor.get_shape().as_list()[-1]
-    batch_size = tf.shape(input_tensor)[0]
-
-    output_tensor = input_tensor
+    input_channel = input_t.get_shape().as_list()[-1]
     with tf.variable_scope(layer_name):
-        w_conv = weight_variable([3, 3, input_channel, output_channel], name=layer_name)
-        output_tensor = conv2d(output_tensor, w_conv, stride=[1, 1, 1, 1], padding='SAME')
-        if with_bn:
-            output_tensor = batch_normalization(x=output_tensor, is_training=is_training, scope="bn")
-        else:
-            b_conv = bias_variable([output_channel], name=layer_name)
-            output_tensor += b_conv
-        output_tensor = activation(output_tensor)
-        if with_dropout \
-                and keep_prob_placeholder is not None \
-                and batch_size is not None:
-            output_tensor = tf.nn.dropout(
-                output_tensor,
-                keep_prob_placeholder,
-                noise_shape=[batch_size, 1, 1, output_channel]
-            )
-    return output_tensor
+        w_conv = weight_variable([kernel_size, kernel_size, input_channel, output_channel], name=layer_name)
+        b_conv = bias_variable([output_channel], name=layer_name)
+        output_t = tf.nn.bias_add(conv2d(input_t, w_conv, stride=[1, stride, stride, 1], padding='SAME'), b_conv)
+        # if with_bn:
+        #     output_t = batch_normalization(x=output_t, is_training=is_training, scope="bn")
+        output_t = activation(output_t)
+    return output_t
 
-class Model:
-    def __init__(self, model, optim, with_bn, with_dropout, with_residual=False):
-        self.optim = optim
-        self.model = str(model)
 
-        self.global_step = tf.Variable(0, trainable=False, name='global_step')
-        self.keep_prob_placeholder = tf.placeholder(dtype=tf.float32, name='keep_probability')
-        self.lr_placeholder = tf.placeholder(dtype=tf.float32, name='learning_rate')
-        self.is_training_placeholder = tf.placeholder(dtype=tf.bool, name='is_training')
-        self.input_image_placeholder = tf.placeholder(
-            dtype=tf.uint8,
-            shape=[None, 32, 32, 3],
-            name='input_image_placeholder')
+def deconv_block(
+        input_t,
+        output_shape,
+        layer_name,
+        is_training,
+        stride_size=2,
+        kernel_size=4,
+        activation=tf.nn.relu,
+        with_bn=True,
+        padding='SAME'
+):
+    inpus_channels = input_t.get_shape().as_list()[-1]
+    with tf.variable_scope(layer_name):
+        w_conv = weight_variable([kernel_size, kernel_size, output_shape[-1], inpus_channels], name=layer_name)
+        output_t = tf.nn.conv2d_transpose(input_t, w_conv, output_shape, [1, stride_size, stride_size, 1], padding=padding)
 
-        self.label_placeholder = tf.placeholder(
-            dtype=tf.int64,
-            shape=[None],
-            name='label_placeholder')
+        b_conv = bias_variable([output_shape[-1]], name=layer_name)
+        output_t = tf.nn.bias_add(output_t, b_conv)
+        # if with_bn:
+        #     output_t = batch_normalization(output_t, is_training=is_training, scope='bn')
+
+        output_t = activation(output_t)
+    return output_t
+
+
+class ACGANModel:
+    def __init__(self, batch_size=64):
+
+        self.noise_size = 100
+        self.cond_size = 5
+        self.latent_cls_size = 10
+        self.batch_size = batch_size
+
+        self.global_step_disc = tf.Variable(0, trainable=False, name='global_step_discriminator')
+        self.global_step_gen = tf.Variable(0, trainable=False, name='global_step_generator')
+        self.keep_prob_ph = tf.placeholder(dtype=tf.float32, name='keep_probability')
+        self.lr_gen_ph = tf.placeholder(dtype=tf.float32, name='learning_rate_for_generator')
+        self.lr_disc_ph = tf.placeholder(dtype=tf.float32, name='learning_rate_for_discriminator')
+        self.is_training_gen_ph = tf.placeholder(dtype=tf.bool, name='is_training_for_generator')
+        self.is_training_disc_ph = tf.placeholder(dtype=tf.bool, name='is_training_for_discriminator')
 
         # FIXME temporary placeholder for convolutional dropout.
-        self.batch_size_placeholder = tf.placeholder(
+        self.batch_size_ph = tf.placeholder(
             dtype=tf.int32,
             shape=(),
             name='batch_size_placeholder'
         )
 
-        if self.model.find("incres") >= 0:
-            self.output = self.build_model_inception_res()
-        elif self.model.find("vgg") >= 0:
-            self.output = self.build_model_vgg(with_bn, with_dropout)
-        else:
-            print('Invalid model... [%s]!' % self.model)
-            exit(1)
-        self.each_loss, self.accum_loss = self.build_loss()
-        self.pred_label = tf.arg_max(tf.nn.softmax(self.output), 1)
+        self.input_image_ph = tf.placeholder(
+            dtype=tf.uint8,
+            shape=[None, 32, 32, 3],
+            name='input_image_placeholder')
 
-        if self.optim == "sgd":
-            optimizer = tf.train.GradientDescentOptimizer
-        elif self.optim == "adam":
-            optimizer = tf.train.AdamOptimizer
-        else:
-            assert("Unknown optimizer")
-        self.train_op = optimizer(self.lr_placeholder).minimize(
-            self.accum_loss,
-            global_step=self.global_step,
+        self.label_cls_ph = tf.placeholder(
+            dtype=tf.int64,
+            shape=[None],
+            name='label_class_placeholder')
+
+        self.cond_ph = tf.placeholder(
+            dtype=tf.float32,
+            shape=[None, self.cond_size],
+            name='label_condition_placeholder')
+
+        self.noise_ph = tf.placeholder(
+            dtype=tf.float32,
+            shape=[None, self.noise_size],
+            name='noise_placeholder',
         )
 
-        self.conf_matrix = tf.confusion_matrix(self.label_placeholder, self.pred_label, num_classes=10)
-        self.correct_count = tf.reduce_sum(tf.to_float(tf.equal(self.pred_label, self.label_placeholder)), axis=0)
-        print(self.each_loss, self.accum_loss)
-        print(self.pred_label)
+        # NOTE Build model for generator
+        self.noise_t = tf.random_normal(shape=[self.batch_size_ph, self.noise_size])
+        self.cond_t = tf.random_normal((self.batch_size_ph, self.cond_size))
+        sample_cls = tf.multinomial(tf.ones((self.batch_size_ph, 10), dtype=tf.float32) / 10, 1)
+        self.label_fake_cls_t = tf.to_int32(tf.squeeze(sample_cls, -1))
+
+        self.fake_image_t = self.build_generator(
+            self.label_fake_cls_t,
+            self.noise_t,
+            self.cond_t,
+            batch_size=self.batch_size
+        )
+        print(self.fake_image_t)
+        print(self.label_fake_cls_t)
+
+        # NOTE Build model for discriminator
+        self.real_image_t = tf.div(tf.to_float(self.input_image_ph), 127.5) - 1.0
+
+        tf.summary.histogram("real_image", self.real_image_t)
+        tf.summary.histogram("fake_image", self.fake_image_t)
+
+        self.disc_fake_t, self.ctgr_fake_t, self.cond_fake_t = self.build_discriminator(input_t=self.fake_image_t)
+        self.disc_real_t, self.ctgr_real_t, _ = self.build_discriminator(input_t=self.real_image_t, reuse=True)
+
+        # NOTE Discriminator loss
+        print(self.disc_real_t)
+        noisy_real_labels = tf.random_uniform([self.batch_size_ph], minval=0.7, maxval=1.2)
+        self.disc_loss_real = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(
+                logits=self.disc_real_t,
+                # labels=noisy_real_labels,
+                labels=tf.ones_like(self.disc_real_t, dtype=tf.float32),
+            )
+        )
+        noisy_fake_labels = tf.random_uniform([self.batch_size_ph], minval=0.0, maxval=0.3)
+        self.disc_loss_fake = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(
+                logits=self.disc_fake_t,
+                # labels=noisy_fake_labels,
+                labels=tf.zeros_like(self.disc_fake_t, dtype=tf.float32),
+            )
+        )
+        self.disc_loss = (self.disc_loss_real + self.disc_loss_fake) / 2.0
+
+        # NOTE Generator loss
+        noisy_real_labels = tf.random_uniform([self.batch_size_ph], minval=0.7, maxval=1.2)
+        self.gen_loss = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(
+                logits=self.disc_fake_t,
+                # labels=noisy_real_labels,
+                labels=tf.ones_like(self.disc_fake_t, dtype=tf.float32),
+            )
+        )
+
+        # NOTE Category loss
+        self.ctgr_loss_real = self.build_cls_loss(labels=self.label_cls_ph, logits=self.ctgr_real_t)
+        self.ctgr_loss_fake = self.build_cls_loss(labels=self.label_fake_cls_t, logits=self.ctgr_fake_t)
+        self.ctgr_loss = (self.ctgr_loss_real + self.ctgr_loss_fake) / 2.0
+
+        self.disc_loss += self.ctgr_loss
+        self.gen_loss += self.ctgr_loss
+
+        # NOTE conditional latent loss
+        self.cond_loss =tf.reduce_mean(tf.square(self.cond_t-self.cond_fake_t))
+        self.disc_loss += self.cond_loss
+        self.gen_loss += self.cond_loss
+
+        # NOTE build optimizers
+        optimizer = tf.train.RMSPropOptimizer
+        # optimizer = tf.train.AdamOptimizer
+
+        t_vars = tf.trainable_variables()
+        d_vars = [var for var in t_vars if "discriminator" in var.name]
+        print("==== Variables for discriminator ====")
+        for var in d_vars:
+            print(var.name)
+        self.train_op_disc = optimizer(self.lr_disc_ph).minimize(
+            loss=(self.disc_loss + self.ctgr_loss),
+            global_step=self.global_step_disc,
+            var_list=d_vars,
+        )
+
+        g_vars = [var for var in t_vars if "generator" in var.name]
+        print("==== Variables for generator ====")
+        for var in g_vars:
+            print(var.name)
+        self.train_op_gen = optimizer(self.lr_gen_ph).minimize(
+            loss=(self.gen_loss + self.ctgr_loss),
+            global_step=self.global_step_gen,
+            var_list=g_vars,
+        )
+
+        # For validation and test
+        most_realistic_index = tf.arg_max(self.disc_fake_t, 0)
+        self.most_realistic_fake_class = tf.gather(self.label_fake_cls_t, most_realistic_index)
+        self.most_realistic_fake_image = tf.gather(self.fake_image_t, most_realistic_index)
+
+        self.pred_label = tf.arg_max(tf.nn.softmax(self.ctgr_real_t), 1)
+        self.conf_matrix = tf.confusion_matrix(self.label_cls_ph, self.pred_label, num_classes=10)
+        self.correct_count = tf.reduce_sum(tf.to_float(tf.equal(self.pred_label, self.label_cls_ph)), axis=0)
 
         return
 
-    def build_augmentation(self, x):
-        output_tensor = tf.cond(
-            self.is_training_placeholder,
-            lambda: tf.map_fn(lambda img: tf.image.random_flip_left_right(img), x),
-            lambda: x
-        )
-        output_tensor = tf.div(tf.to_float(output_tensor), 255.0, name="input_image_float")
-        return output_tensor
+    def build_generator(
+            self,
+            input_class_t,
+            input_noise_t,
+            input_cond_t,
+            batch_size,
+            reuse=False,
+            # activation=leaky_relu,
+            activation=tf.nn.relu,
+            name="generator",
+    ):
+        with tf.variable_scope(name, reuse=reuse):
+            with tf.variable_scope("latent_concat"):
+                # output_t = input_noise_t
 
-    def build_model_inception_res(self, name="inception_res_net"):
-        output_t = self.build_augmentation(self.input_image_placeholder)
-        with tf.variable_scope(name):
+                # class_embed_t = tf.one_hot(input_class_t, self.latent_cls_size)
+                params = weight_variable([10, self.latent_cls_size], name="class_params")
+                class_embed_t = tf.nn.embedding_lookup(params, input_class_t)
 
-            print(self.model)
-            if self.model == "incres_v1":
-                layers_size = [1, 1, 2, 2, 2]
-            elif self.model == "incres_v2":
-                layers_size = [2, 2, 3, 3, 3]
-            elif self.model == "incres_v3":
-                layers_size = [2, 2, 4, 4, 4]
+                output_t = tf.concat([input_noise_t, input_cond_t, class_embed_t], axis=-1)
+
+            if True:
+                output_t = tf.reshape(output_t, [-1, 1, 1, self.noise_size+self.cond_size+self.latent_cls_size])
+                output_t = deconv_block(
+                    output_t,
+                    [batch_size, 2, 2, 512],
+                    layer_name="conv_tp_0",
+                    is_training=self.is_training_gen_ph,
+                    activation=activation,
+                    padding='VALID',
+                    kernel_size=2,
+                )
+
             else:
-                print("Invalid model [%s]" % self.model)
-                exit(1)
+                # NOTE from DCGAN model
+                with tf.variable_scope("fc"):
+                    w_fc = weight_variable([self.noise_size+self.cond_size+self.latent_cls_size, 512*2*2], name="fc")
+                    b_fc = bias_variable([512*2*2], name="fc")
+                    output_t = tf.nn.bias_add(tf.matmul(output_t, w_fc), b_fc)
+                    output_t = tf.reshape(output_t, [-1, 2, 2, 512])
+                    output_t = batch_normalization(output_t, is_training=self.is_training_gen_ph, scope="bn")
+                    output_t = activation(output_t)
 
-            output_t = vgg_block(
-                input_tensor=output_t,
-                output_channel=64,
-                layer_name="vgg_layer",
-                is_training=self.is_training_placeholder,
-                with_bn=True,
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 512])
+
+            output_t = deconv_block(
+                output_t,
+                [batch_size, 4, 4, 256],
+                layer_name="conv_tp_1",
+                is_training=self.is_training_gen_ph,
+                activation=activation,
             )
 
-            for idx in range(layers_size[0]-1):
-                output_t = inception_block(output_t, "inception_layer1_"+str(idx), self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer1", self.is_training_placeholder, with_maxpool=False)
-            output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 64])
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 256])
 
-            for idx in range(layers_size[1]):
-                output_t = inception_block(output_t, "inception_layer2_"+str(idx), self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer2", self.is_training_placeholder)
-            output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 128])
+            output_t = deconv_block(
+                output_t,
+                [batch_size, 8, 8, 128],
+                layer_name="conv_tp_2",
+                is_training=self.is_training_gen_ph,
+                activation=activation,
+            )
 
-            for idx in range(layers_size[2]):
-                output_t = inception_block(output_t, "inception_layer3_"+str(idx), self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer3", self.is_training_placeholder)
-            output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 256])
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 128])
 
-            for idx in range(layers_size[3]):
-                output_t = inception_block(output_t, "inception_layer4_"+str(idx), self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer4", self.is_training_placeholder)
-            output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 512])
+            output_t = deconv_block(
+                output_t,
+                [batch_size, 16, 16, 64],
+                layer_name="conv_tp_3",
+                is_training=self.is_training_gen_ph,
+                activation=activation,
+            )
 
-            for idx in range(layers_size[4]):
-                output_t = inception_block(output_t, "inception_layer5_"+str(idx), self.is_training_placeholder)
-            output_t = reduction_block(output_t, "reduction_layer5", self.is_training_placeholder, with_maxpool=False)
-            output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder, noise_shape=[self.batch_size_placeholder, 1, 1, 512])
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 64])
 
-            # input size 1 w/ channel 512 => fc layer
-            output_t = tf.squeeze(output_t, axis=[1, 2])
-
-            with tf.variable_scope("fc_1"):
-                w_fc1 = weight_variable([512, 512], name="fc_1")
-                output_t = tf.matmul(output_t, w_fc1)
-                output_t = batch_normalization(x=output_t, is_training=self.is_training_placeholder, scope="bn")
-                output_t = tf.nn.relu(output_t)
-
-            output_t = tf.nn.dropout(output_t, self.keep_prob_placeholder)
-
-            with tf.variable_scope("fc_2"):
-                w_fc2 = weight_variable([512, 10], name="fc_2")
-                b_fc2 = bias_variable([10], name="fc_2")
-                output_t = tf.matmul(output_t, w_fc2) + b_fc2
-
-            print("last layer of inception residual model =", output_t)
+            output_t = deconv_block(
+                output_t,
+                [batch_size, 32, 32, 3],
+                layer_name="conv_tp_4",
+                is_training=self.is_training_gen_ph,
+                with_bn=False,
+                activation=tf.nn.tanh,
+            )
 
         return output_t
 
-    def build_model_vgg(self, with_bn, with_dropout, name="vgg"):
-        if self.model == "vgg11":
-            layers_size = [1, 1, 2, 2, 2]
-        elif self.model == "vgg19":
-            layers_size = [2, 2, 4, 4, 4]
-        else: # vgg16
-            layers_size = [2, 2, 3, 3, 3]
+    def build_discriminator(
+            self,
+            input_t,
+            reuse=False,
+            activation=leaky_relu,
+            name="discriminator"
+    ):
+        if False:
+            output_t = tf.cond(
+                self.is_training_disc_ph,
+                lambda: tf.map_fn(lambda img: tf.image.random_flip_left_right(img), input_t),
+                lambda: input_t
+            )
+        else:
+            output_t = input_t
 
-
-        output_tensor = self.build_augmentation(self.input_image_placeholder)
-        with tf.variable_scope(name):
-
+        with tf.variable_scope(name, reuse=reuse):
             # input size 32
-            for idx in range(layers_size[0]):
-                output_tensor = vgg_block(
-                    input_tensor=output_tensor,
-                    output_channel=64,
-                    layer_name="layer1_"+str(idx),
-                    is_training=self.is_training_placeholder,
-                    with_bn=with_bn,
-                )
-            with tf.variable_scope("layer1_3"):
-                output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
-
-            if with_dropout:
-                output_tensor = tf.nn.dropout(
-                    output_tensor,
-                    self.keep_prob_placeholder,
-                    noise_shape=[self.batch_size_placeholder, 1, 1, 64]
-                )
+            output_t = cnn_block(
+                input_t=output_t,
+                output_channel=64,
+                layer_name="layer1",
+                is_training=self.is_training_disc_ph,
+                activation=activation,
+                with_bn=False,
+            )
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 64])
 
             # input size 16
-            for idx in range(layers_size[1]):
-                output_tensor = vgg_block(
-                    input_tensor=output_tensor,
-                    output_channel=128,
-                    layer_name="layer2_"+str(idx),
-                    is_training=self.is_training_placeholder,
-                    with_bn=with_bn,
-                )
-            with tf.variable_scope("layer2_pooling"):
-                output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
-
-            if with_dropout:
-                output_tensor = tf.nn.dropout(
-                    output_tensor,
-                    self.keep_prob_placeholder,
-                    noise_shape=[self.batch_size_placeholder, 1, 1, 128]
-                )
+            output_t = cnn_block(
+                input_t=output_t,
+                output_channel=128,
+                layer_name="layer2",
+                is_training=self.is_training_disc_ph,
+                activation=activation,
+            )
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 128])
 
             # input size 8
-            for idx in range(layers_size[2]):
-                output_tensor = vgg_block(
-                    input_tensor=output_tensor,
-                    output_channel=256,
-                    layer_name="layer3_"+str(idx),
-                    is_training=self.is_training_placeholder,
-                    with_bn=with_bn,
-                )
-            with tf.variable_scope("layer3_pooling"):
-                output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
-
-            if with_dropout:
-                output_tensor = tf.nn.dropout(
-                    output_tensor,
-                    self.keep_prob_placeholder,
-                    noise_shape=[self.batch_size_placeholder, 1, 1, 256]
-                )
+            output_t = cnn_block(
+                input_t=output_t,
+                output_channel=256,
+                layer_name="layer3",
+                is_training=self.is_training_disc_ph,
+                activation=activation,
+            )
+            # output_t = tf.nn.dropout(output_t, self.keep_prob_ph, noise_shape=[self.batch_size_ph, 1, 1, 256])
 
             # input size 4
-            for idx in range(layers_size[3]):
-                output_tensor = vgg_block(
-                    input_tensor=output_tensor,
-                    output_channel=512,
-                    layer_name="layer4_"+str(idx),
-                    is_training=self.is_training_placeholder,
-                    with_bn=with_bn,
-                )
-            with tf.variable_scope("layer4_pooling"):
-                output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
+            output_t = cnn_block(
+                input_t=output_t,
+                output_channel=512,
+                layer_name="layer4",
+                is_training=self.is_training_disc_ph,
+                activation=activation,
+            )
 
-            if with_dropout:
-                output_tensor = tf.nn.dropout(
-                    output_tensor,
-                    self.keep_prob_placeholder,
-                    noise_shape=[self.batch_size_placeholder, 1, 1, 512]
-                )
+            # input size 2 w/ channel 512 => fc layer
+            output_t = tf.reshape(output_t, [self.batch_size, 512*2*2])
+            output_share_t = output_t
 
-            # input size 2
-            for idx in range(layers_size[4]):
-                output_tensor = vgg_block(
-                    input_tensor=output_tensor,
-                    output_channel=512,
-                    layer_name="layer5_"+str(idx),
-                    is_training=self.is_training_placeholder,
-                    with_bn=with_bn,
-                )
-            with tf.variable_scope("layer5_pooling"):
-                output_tensor = tf.nn.max_pool(output_tensor, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='VALID', data_format='NHWC')
+            # Branch 1. discriminator for real / fake
+            output_disc_t = output_share_t
+            with tf.variable_scope("disc_fc"):
+                w_conv = weight_variable([512*2*2, 1], name="disc_fc")
+                b_conv = bias_variable([1], name="disc_fc")
+                output_disc_t = tf.matmul(output_disc_t, w_conv) + b_conv
 
-            if with_dropout:
-                output_tensor = tf.nn.dropout(
-                    output_tensor,
-                    self.keep_prob_placeholder,
-                    noise_shape=[self.batch_size_placeholder, 1, 1, 512]
-                )
+            # Branch 2. discriminator for category
+            output_ctgr_t = output_share_t
+            with tf.variable_scope("ctgr_fc_1"):
+                w_conv = weight_variable([512*2*2, 512], name="ctgr_fc_1")
+                b_conv = bias_variable([512], name="ctgr_fc_1")
+                output_ctgr_t = tf.matmul(output_ctgr_t, w_conv) + b_conv
+                output_ctgr_t = activation(output_ctgr_t)
 
-            # input size 1 w/ channel 512 => fc layer
-            output_tensor = tf.squeeze(output_tensor, axis=[1, 2])
+            with tf.variable_scope("ctgr_fc_2"):
+                w_conv = weight_variable([512, 10], name="ctgr_fc_2")
+                b_conv = bias_variable([10], name="ctgr_fc_2")
+                output_ctgr_t = tf.matmul(output_ctgr_t, w_conv) + b_conv
 
-            with tf.variable_scope("fc_1"):
-                w_fc1 = weight_variable([512, 512], name="fc_1")
-                output_tensor = tf.matmul(output_tensor, w_fc1)
-                if with_bn:
-                    output_tensor = batch_normalization(x=output_tensor, is_training=self.is_training_placeholder, scope="bn")
-                else:
-                    b_fc1 = bias_variable([512], name="fc_1")
-                    output_tensor += b_fc1
-                output_tensor = tf.nn.relu(output_tensor)
+            # Branch 3. discriminator for conditional latent
+            output_cont_t = output_share_t
+            with tf.variable_scope("cond_fc_1"):
+                w_conv = weight_variable([512*2*2, 512], name="cond_fc_1")
+                b_conv = bias_variable([512], name="cond_fc_1")
+                output_cont_t = tf.matmul(output_cont_t, w_conv) + b_conv
+                output_cont_t = activation(output_cont_t)
 
-            if with_dropout:
-                output_tensor = tf.nn.dropout(output_tensor, self.keep_prob_placeholder)
+            with tf.variable_scope("cond_fc_2"):
+                w_conv = weight_variable([512, self.cond_size], name="cond_fc_2")
+                b_conv = bias_variable([self.cond_size], name="cond_fc_2")
+                output_cont_t = tf.matmul(output_cont_t, w_conv) + b_conv
 
-            with tf.variable_scope("fc_2"):
+        return output_disc_t, output_ctgr_t, output_cont_t
 
-                w_fc2 = weight_variable([512, 10], name="fc_2")
-                b_fc2 = bias_variable([10], name="fc_2")
-                output_tensor = tf.matmul(output_tensor, w_fc2) + b_fc2
+    def build_cls_loss(self, labels, logits):
 
-            print("last layer of VGG model =", output_tensor)
-
-        return output_tensor
-
-    def build_loss(self):
-        each_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.label_placeholder, logits=self.output)
+        each_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=logits)
         accum_loss = tf.reduce_mean(each_loss, axis=[0])
-        return each_loss, accum_loss
+
+        # make soft soft-max cross entropy
+        # onehot_labels = tf.one_hot(labels, 10)
+        # accum_loss = tf.losses.softmax_cross_entropy(onehot_labels=onehot_labels, logits=logits, label_smoothing=0)
+
+        return accum_loss
 
 
